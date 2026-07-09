@@ -193,6 +193,42 @@ app.get('/groups', async (req, res) => {
   }
 });
 
+// Temporary diagnostic route: dumps any Swagger/OpenAPI path mentioning
+// "device" so we can find the right endpoint for per-group device counts.
+// Safe to remove once we've identified the correct API call.
+app.get('/debug/swagger', async (req, res) => {
+  if (!req.session.accessToken) return res.redirect('/');
+  const candidates = [
+    '/swagger/v2/swagger.json',
+    '/swagger/docs/v1',
+    '/docs/swagger.json',
+    '/swagger.json',
+  ];
+  const results = [];
+  for (const path of candidates) {
+    try {
+      const resp = await fetch(`${apiBase()}${path}`, {
+        headers: {
+          Authorization: `Bearer ${req.session.accessToken}`,
+          Accept: 'application/json',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'User-Agent': 'MobiControl-Device-Groups-Viewer/1.0',
+        },
+      });
+      if (!resp.ok) {
+        results.push({ path, status: resp.status });
+        continue;
+      }
+      const json = await resp.json();
+      const paths = Object.keys(json.paths || {}).filter((p) => /device/i.test(p));
+      results.push({ path, status: resp.status, deviceRelatedPaths: paths });
+    } catch (err) {
+      results.push({ path, error: err.message });
+    }
+  }
+  res.type('json').send(JSON.stringify(results, null, 2));
+});
+
 app.get('/logout', (req, res) => {
   req.session.destroy(() => res.redirect('/'));
 });
