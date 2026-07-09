@@ -34,6 +34,13 @@
       </form>
 
       <p class="hint">
+        On <a href="/devices">All Devices</a>, user email is read directly from each device's
+        "User Email" custom attribute in MobiControl whenever it's set — no CSV needed for those
+        devices. This import is only a <strong>fallback</strong> for devices that don't have that
+        attribute set.
+      </p>
+
+      <p class="hint">
         The CSV needs two columns: a device identifier and the user's email. A header row with
         columns like <code>DeviceId</code>/<code>Udid</code> and <code>Email</code> is detected
         automatically; otherwise the first column is treated as the device ID and the second as

@@ -23,18 +23,18 @@
       <div class="error"><%= error %></div>
     <% } %>
 
-    <% if (lastImport) { %>
-      <p class="hint">
-        Showing user email from "<%= lastImport.filename %>" (<%= lastImport.mappedCount %> device(s) mapped,
-        imported <%= new Date(lastImport.importedAt).toLocaleString() %>). Devices without a match still show
-        their MobiControl device name. <a href="/devices/import">Re-import</a>
-      </p>
-    <% } else { %>
-      <p class="hint">
-        No CSV has been imported yet, so devices are shown by their MobiControl device name.
-        <a href="/devices/import">Import a device-id-to-email CSV</a> to show user email instead.
-      </p>
-    <% } %>
+    <p class="hint">
+      User email comes from each device's "User Email" custom attribute in MobiControl where set.
+      <% if (lastImport) { %>
+        Devices missing that attribute fall back to the CSV imported from "<%= lastImport.filename %>"
+        (<%= lastImport.mappedCount %> device(s), imported <%= new Date(lastImport.importedAt).toLocaleString() %>).
+        <a href="/devices/import">Re-import</a>
+      <% } else { %>
+        Devices missing that attribute can optionally be covered by <a href="/devices/import">importing a device-id-to-email CSV</a>
+        as a fallback.
+      <% } %>
+      Devices with neither show their MobiControl device name, tagged "unmapped".
+    </p>
 
     <div class="devices-layout">
       <aside class="card filter-card">
@@ -77,6 +77,7 @@
               <tr>
                 <td>
                   <%= d.display %>
+                  <% if (d.source === 'csv') { %><span class="tag">csv</span><% } %>
                   <% if (!d.mapped) { %><span class="tag">unmapped</span><% } %>
                 </td>
                 <td><%= d.path %></td>
