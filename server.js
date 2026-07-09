@@ -178,6 +178,10 @@ app.get('/groups', async (req, res) => {
   try {
     const data = await fetchDeviceGroups(req.session.accessToken);
     const items = Array.isArray(data) ? data : data.Items || data.items || data.Data || data.data || [];
+    if (items.length > 0) {
+      console.log(`[groups] sample item keys: ${Object.keys(items[0]).join(', ')}`);
+      console.log(`[groups] sample item: ${JSON.stringify(items[0]).slice(0, 1000)}`);
+    }
     const deviceGroups = items.map(normalizeGroup);
     res.render('groups', { error: null, deviceGroups, username: req.session.username });
   } catch (err) {
