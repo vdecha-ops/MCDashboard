@@ -117,25 +117,57 @@ async function fetchDeviceGroups(accessToken) {
   return resp.json();
 }
 
-// MobiControl's /devicegroups list doesn't include a device count. The only
-// way to get one is to fetch the devices filtered by group and count them:
-// GET /devices?deviceGroupId={ReferenceId} -> JSON array of device objects.
-async function fetchDeviceCount(accessToken, groupId) {
-  const resp = await fetch(`${apiBase()}/devices?deviceGroupId=${encodeURIComponent(groupId)}`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: 'application/json',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'User-Agent': 'MobiControl-Device-Groups-Viewer/1.0',
-    },
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!resp.ok) {
-    throw new Error(`devices?deviceGroupId=${groupId} failed with status ${resp.status}`);
+// MobiControl's /devicegroups list doesn't include a device count, and the
+// /devices endpoint ignores every "filter by group" query param we tried
+// (deviceGroupId, groupId, etc. -- all silently returned the same unfiltered
+// list). What DOES work: each device object has its own "Path" field that
+// exactly matches its group's Path, and /devices supports real pagination
+// via "skip" and "take" (confirmed: skip=50&take=100 returned the remaining
+// 84 of 134 total devices). So we page through every device once and count
+// them per exact Path match -- far cheaper than one API call per group too.
+async function fetchAllDevices(accessToken) {
+  const pageSize = 200;
+  let skip = 0;
+  let total = Infinity;
+  const all = [];
+
+  while (skip < total) {
+    const resp = await fetch(`${apiBase()}/devices?skip=${skip}&take=${pageSize}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'User-Agent': 'MobiControl-Device-Groups-Viewer/1.0',
+      },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!resp.ok) {
+      throw new Error(`devices?skip=${skip}&take=${pageSize} failed with status ${resp.status}`);
+    }
+    const totalCountHeader = resp.headers.get('x-total-count');
+    if (totalCountHeader) total = parseInt(totalCountHeader, 10);
+
+    const data = await resp.json();
+    const items = Array.isArray(data) ? data : data.Items || data.items || data.Data || data.data || [];
+    all.push(...items);
+
+    if (items.length === 0) break; // safety net against an infinite loop
+    skip += items.length;
   }
-  const data = await resp.json();
-  const items = Array.isArray(data) ? data : data.Items || data.items || data.Data || data.data || [];
-  return items.length;
+
+  return all;
+}
+
+// Counts devices per exact group Path (devices directly in that group; does
+// not roll up sub-group counts into their parents).
+function countDevicesByPath(devices) {
+  const counts = new Map();
+  for (const device of devices) {
+    const p = device && device.Path;
+    if (!p) continue;
+    counts.set(p, (counts.get(p) || 0) + 1);
+  }
+  return counts;
 }
 
 function pick(obj, keys) {
@@ -201,24 +233,18 @@ app.get('/groups', async (req, res) => {
     const items = Array.isArray(data) ? data : data.Items || data.items || data.Data || data.data || [];
     const deviceGroups = items.map(normalizeGroup);
 
-    // Device counts require one extra API call per group (MobiControl's
-    // group list doesn't include counts). Fetch them in parallel; if a
-    // particular group's count fails to load, show "?" rather than failing
-    // the whole page.
-    await Promise.all(
-      deviceGroups.map(async (group) => {
-        if (!group.id) {
-          group.deviceCount = '';
-          return;
-        }
-        try {
-          group.deviceCount = await fetchDeviceCount(req.session.accessToken, group.id);
-        } catch (err) {
-          console.error(`[deviceCount] group ${group.id} (${group.name}): ${err.message}`);
-          group.deviceCount = '?';
-        }
-      })
-    );
+    try {
+      const devices = await fetchAllDevices(req.session.accessToken);
+      const counts = countDevicesByPath(devices);
+      for (const group of deviceGroups) {
+        group.deviceCount = group.path ? counts.get(group.path) || 0 : '';
+      }
+    } catch (err) {
+      console.error(`[deviceCount] failed to load device counts: ${err.message}`);
+      for (const group of deviceGroups) {
+        group.deviceCount = '?';
+      }
+    }
 
     res.render('groups', { error: null, deviceGroups, username: req.session.username });
   } catch (err) {
@@ -228,107 +254,6 @@ app.get('/groups', async (req, res) => {
     const msg = err.status ? httpErrorMessage(err.status) : `Could not reach MobiControl server: ${err.message}`;
     res.render('groups', { error: msg, deviceGroups: [], username: req.session.username });
   }
-});
-
-// Temporary diagnostic route: each device has its own "Path" field matching
-// its group's Path exactly, so we can count devices per group client-side.
-// This just confirms how to page through all 134 devices (default page is
-// capped at 50) before wiring up the real counting logic.
-app.get('/debug/paging', async (req, res) => {
-  if (!req.session.accessToken) return res.redirect('/');
-  const attempts = [
-    '/devices?pageSize=500',
-    '/devices?top=500',
-    '/devices?PageSize=500',
-    '/devices?page=1&pageSize=100',
-    '/devices?page=2&pageSize=50',
-    '/devices?skip=50&take=100',
-    '/devices?pageNumber=2',
-  ];
-  const results = [];
-  for (const path of attempts) {
-    try {
-      const resp = await fetch(`${apiBase()}${path}`, {
-        headers: {
-          Authorization: `Bearer ${req.session.accessToken}`,
-          Accept: 'application/json',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'User-Agent': 'MobiControl-Device-Groups-Viewer/1.0',
-        },
-        signal: AbortSignal.timeout(12000),
-      });
-      let itemCount = null;
-      let firstPath = null;
-      if (resp.ok) {
-        const json = await resp.json().catch(() => null);
-        const items = Array.isArray(json) ? json : json && (json.Items || json.items);
-        itemCount = Array.isArray(items) ? items.length : null;
-        firstPath = Array.isArray(items) && items[0] ? items[0].Path : null;
-      }
-      const line = `[paging] ${path} -> status=${resp.status} itemCount=${itemCount} x-total-count=${resp.headers.get('x-total-count')} firstPath=${firstPath}`;
-      console.log(line);
-      results.push(line);
-    } catch (err) {
-      const line = `[paging] ${path} -> ERROR ${err.message}`;
-      console.log(line);
-      results.push(line);
-    }
-  }
-  res.type('text').send(results.join('\n'));
-});
-
-app.get('/debug/filter', async (req, res) => {
-  if (!req.session.accessToken) return res.redirect('/');
-  const groups = {
-    rootCompany: 'afbd2949-6402-4801-b216-25b10b2e5b3f', // "My Company" (root, should be large)
-    bill: '3a5efd70-d2a9-4a79-b1fc-464a9744fa2f', // "BILL" (small leaf group)
-  };
-  const paramNames = [
-    'deviceGroupId',
-    'DeviceGroupId',
-    'groupId',
-    'GroupId',
-    'groupID',
-    'GroupID',
-    'deviceGroupID',
-    'referenceId',
-    'ReferenceId',
-  ];
-  const results = [];
-  for (const [label, id] of Object.entries(groups)) {
-    for (const param of paramNames) {
-      const url = `${apiBase()}/devices?${param}=${encodeURIComponent(id)}`;
-      try {
-        const resp = await fetch(url, {
-          headers: {
-            Authorization: `Bearer ${req.session.accessToken}`,
-            Accept: 'application/json',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'User-Agent': 'MobiControl-Device-Groups-Viewer/1.0',
-          },
-          signal: AbortSignal.timeout(10000),
-        });
-        const headerDump = Array.from(resp.headers.entries())
-          .filter(([k]) => /count|total|range|pag/i.test(k))
-          .map(([k, v]) => `${k}=${v}`)
-          .join(', ');
-        let count = null;
-        if (resp.ok) {
-          const json = await resp.json().catch(() => null);
-          const items = Array.isArray(json) ? json : json && (json.Items || json.items || json.Data || json.data);
-          count = Array.isArray(items) ? items.length : null;
-        }
-        const line = `[filter] ${label} ${param} -> status=${resp.status} count=${count} headers[${headerDump}]`;
-        console.log(line);
-        results.push(line);
-      } catch (err) {
-        const line = `[filter] ${label} ${param} -> ERROR ${err.message}`;
-        console.log(line);
-        results.push(line);
-      }
-    }
-  }
-  res.type('text').send(results.join('\n'));
 });
 
 app.get('/logout', (req, res) => {
