@@ -230,6 +230,64 @@ app.get('/groups', async (req, res) => {
   }
 });
 
+// Temporary diagnostic route: the "deviceGroupId" query param turned out to
+// be silently ignored (every group returned the same default page size).
+// This tries several candidate filter param names against two very
+// different-sized groups so we can spot which one actually filters.
+app.get('/debug/filter', async (req, res) => {
+  if (!req.session.accessToken) return res.redirect('/');
+  const groups = {
+    rootCompany: 'afbd2949-6402-4801-b216-25b10b2e5b3f', // "My Company" (root, should be large)
+    bill: '3a5efd70-d2a9-4a79-b1fc-464a9744fa2f', // "BILL" (small leaf group)
+  };
+  const paramNames = [
+    'deviceGroupId',
+    'DeviceGroupId',
+    'groupId',
+    'GroupId',
+    'groupID',
+    'GroupID',
+    'deviceGroupID',
+    'referenceId',
+    'ReferenceId',
+  ];
+  const results = [];
+  for (const [label, id] of Object.entries(groups)) {
+    for (const param of paramNames) {
+      const url = `${apiBase()}/devices?${param}=${encodeURIComponent(id)}`;
+      try {
+        const resp = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${req.session.accessToken}`,
+            Accept: 'application/json',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'User-Agent': 'MobiControl-Device-Groups-Viewer/1.0',
+          },
+          signal: AbortSignal.timeout(10000),
+        });
+        const headerDump = Array.from(resp.headers.entries())
+          .filter(([k]) => /count|total|range|pag/i.test(k))
+          .map(([k, v]) => `${k}=${v}`)
+          .join(', ');
+        let count = null;
+        if (resp.ok) {
+          const json = await resp.json().catch(() => null);
+          const items = Array.isArray(json) ? json : json && (json.Items || json.items || json.Data || json.data);
+          count = Array.isArray(items) ? items.length : null;
+        }
+        const line = `[filter] ${label} ${param} -> status=${resp.status} count=${count} headers[${headerDump}]`;
+        console.log(line);
+        results.push(line);
+      } catch (err) {
+        const line = `[filter] ${label} ${param} -> ERROR ${err.message}`;
+        console.log(line);
+        results.push(line);
+      }
+    }
+  }
+  res.type('text').send(results.join('\n'));
+});
+
 app.get('/logout', (req, res) => {
   req.session.destroy(() => res.redirect('/'));
 });
