@@ -60,6 +60,8 @@ async function getAccessToken(username, password) {
   });
 
   if (!resp.ok) {
+    const bodyText = await resp.text().catch(() => '');
+    console.error(`[token] ${resp.status} ${resp.statusText} from ${apiBase()}/token :: ${bodyText.slice(0, 500)}`);
     const err = new Error(`Token request failed with status ${resp.status}`);
     err.status = resp.status;
     throw err;
@@ -73,6 +75,8 @@ async function fetchDeviceGroups(accessToken) {
   });
 
   if (!resp.ok) {
+    const bodyText = await resp.text().catch(() => '');
+    console.error(`[devicegroups] ${resp.status} ${resp.statusText} from ${apiBase()}/devicegroups :: ${bodyText.slice(0, 500)}`);
     const err = new Error(`Device groups request failed with status ${resp.status}`);
     err.status = resp.status;
     throw err;
