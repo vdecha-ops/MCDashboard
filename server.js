@@ -117,6 +117,27 @@ async function fetchDeviceGroups(accessToken) {
   return resp.json();
 }
 
+// MobiControl's /devicegroups list doesn't include a device count. The only
+// way to get one is to fetch the devices filtered by group and count them:
+// GET /devices?deviceGroupId={ReferenceId} -> JSON array of device objects.
+async function fetchDeviceCount(accessToken, groupId) {
+  const resp = await fetch(`${apiBase()}/devices?deviceGroupId=${encodeURIComponent(groupId)}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'User-Agent': 'MobiControl-Device-Groups-Viewer/1.0',
+    },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!resp.ok) {
+    throw new Error(`devices?deviceGroupId=${groupId} failed with status ${resp.status}`);
+  }
+  const data = await resp.json();
+  const items = Array.isArray(data) ? data : data.Items || data.items || data.Data || data.data || [];
+  return items.length;
+}
+
 function pick(obj, keys) {
   for (const k of keys) {
     if (obj[k] !== undefined && obj[k] !== null && obj[k] !== '') return obj[k];
@@ -132,7 +153,7 @@ function normalizeGroup(g) {
   return {
     name: pick(g, ['Name', 'name', 'GroupName', 'DisplayName']),
     path: pick(g, ['Path', 'path', 'FullPath', 'fullPath']),
-    id: pick(g, ['Id', 'id', 'ID', 'GroupID', 'DeviceGroupId']),
+    id: pick(g, ['ReferenceId', 'referenceId', 'Id', 'id', 'ID', 'GroupID', 'DeviceGroupId']),
     parentId: pick(g, ['ParentId', 'parentId', 'ParentID', 'ParentGroupId']),
     deviceCount: pick(g, ['DeviceCount', 'deviceCount', 'Count']),
   };
@@ -178,11 +199,27 @@ app.get('/groups', async (req, res) => {
   try {
     const data = await fetchDeviceGroups(req.session.accessToken);
     const items = Array.isArray(data) ? data : data.Items || data.items || data.Data || data.data || [];
-    if (items.length > 0) {
-      console.log(`[groups] sample item keys: ${Object.keys(items[0]).join(', ')}`);
-      console.log(`[groups] sample item: ${JSON.stringify(items[0]).slice(0, 1000)}`);
-    }
     const deviceGroups = items.map(normalizeGroup);
+
+    // Device counts require one extra API call per group (MobiControl's
+    // group list doesn't include counts). Fetch them in parallel; if a
+    // particular group's count fails to load, show "?" rather than failing
+    // the whole page.
+    await Promise.all(
+      deviceGroups.map(async (group) => {
+        if (!group.id) {
+          group.deviceCount = '';
+          return;
+        }
+        try {
+          group.deviceCount = await fetchDeviceCount(req.session.accessToken, group.id);
+        } catch (err) {
+          console.error(`[deviceCount] group ${group.id} (${group.name}): ${err.message}`);
+          group.deviceCount = '?';
+        }
+      })
+    );
+
     res.render('groups', { error: null, deviceGroups, username: req.session.username });
   } catch (err) {
     if (err.status === 401) {
@@ -191,45 +228,6 @@ app.get('/groups', async (req, res) => {
     const msg = err.status ? httpErrorMessage(err.status) : `Could not reach MobiControl server: ${err.message}`;
     res.render('groups', { error: msg, deviceGroups: [], username: req.session.username });
   }
-});
-
-// Temporary diagnostic route: probes a handful of plausible endpoints for
-// per-group device counts against a real group ID, with a hard timeout so a
-// stalled candidate can't hang the whole request. Safe to remove once we've
-// identified the correct API call.
-app.get('/debug/probe', async (req, res) => {
-  if (!req.session.accessToken) return res.redirect('/');
-  const groupId = req.query.groupId || 'afbd2949-6402-4801-b216-25b10b2e5b3f'; // "My Company"
-  const candidates = [
-    `/devicegroups/${groupId}`,
-    `/devicegroups/${groupId}/devices`,
-    `/devicegroups/${encodeURIComponent('\\\\My Company')}/devices`,
-    `/devices?deviceGroupId=${groupId}`,
-    `/devices?groupId=${groupId}`,
-    `/devicegroups/${groupId}/summary`,
-    `/devicegroups/${groupId}/deviceCount`,
-  ];
-  const results = [];
-  for (const path of candidates) {
-    try {
-      const resp = await fetch(`${apiBase()}${path}`, {
-        headers: {
-          Authorization: `Bearer ${req.session.accessToken}`,
-          Accept: 'application/json',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'User-Agent': 'MobiControl-Device-Groups-Viewer/1.0',
-        },
-        signal: AbortSignal.timeout(8000),
-      });
-      const bodyText = await resp.text().catch(() => '');
-      results.push({ path, status: resp.status, body: bodyText.slice(0, 400) });
-      console.log(`[probe] ${path} -> ${resp.status} :: ${bodyText.slice(0, 300)}`);
-    } catch (err) {
-      results.push({ path, error: err.message });
-      console.log(`[probe] ${path} -> ERROR ${err.message}`);
-    }
-  }
-  res.type('json').send(JSON.stringify(results, null, 2));
 });
 
 app.get('/logout', (req, res) => {
