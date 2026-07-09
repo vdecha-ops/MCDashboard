@@ -242,34 +242,6 @@ app.get('/api/device-lookup', requireLogin, async (req, res) => {
   }
 });
 
-// TEMPORARY diagnostic route -- checks whether this specific MobiControl
-// server's /devices response includes any field shaped like telecom/cellular
-// data-usage volume (the numbers currently only available via the manually
-// uploaded "Telecom Data Usage" report/CSV). Returns one full sample device
-// object plus a list of any field names (across all devices, in case fields
-// are sparse) that look usage-related. Not linked from any page -- hit it
-// manually while signed in. Remove once checked.
-app.get('/debug/device-usage-scan', requireLogin, async (req, res) => {
-  try {
-    const rawDevices = await fetchAllDevices(req.session.accessToken);
-    const usagePattern = /usage|data.?volume|cellular|telecom|volume|byte|[^a-z]kb[^a-z]|[^a-z]mb[^a-z]|roaming|traffic|consum/i;
-    const matchingKeys = new Set();
-    rawDevices.forEach((d) => {
-      Object.keys(d || {}).forEach((k) => {
-        if (usagePattern.test(k)) matchingKeys.add(k);
-      });
-    });
-    res.json({
-      deviceCount: rawDevices.length,
-      sampleDeviceAllKeys: Object.keys(rawDevices[0] || {}).sort(),
-      sampleDeviceFull: rawDevices[0] || null,
-      usageShapedKeysFoundAcrossAllDevices: Array.from(matchingKeys).sort(),
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 app.get('/logout', (req, res) => {
   req.session.destroy(() => res.redirect('/'));
 });
