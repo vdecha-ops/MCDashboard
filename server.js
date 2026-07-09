@@ -207,10 +207,36 @@ const DEVICE_NAME_FIELDS = [
   'Alias', 'alias', 'DeviceName', 'deviceName', 'Name', 'name', 'FriendlyName', 'friendlyName',
 ];
 
+// This MobiControl server stores the assigned user's email as a per-device
+// Custom Attribute (Console > Data > Custom Attributes), not a built-in
+// field -- confirmed via a raw /devices dump: each device has a
+// "CustomAttributes" array of { Name, Value, DataType } entries, one of
+// which is named "User Email". Custom attribute names are configurable per
+// deployment, so we match loosely (case-insensitive, "email" anywhere in
+// the name) rather than hardcoding the exact label.
+function extractCustomAttributeEmail(d) {
+  const attrs = Array.isArray(d.CustomAttributes)
+    ? d.CustomAttributes
+    : Array.isArray(d.customAttributes)
+      ? d.customAttributes
+      : [];
+  for (const attr of attrs) {
+    if (!attr) continue;
+    const name = String(attr.Name || attr.name || '').toLowerCase();
+    if (name.includes('email') || name.includes('e-mail')) {
+      const value = attr.Value !== undefined ? attr.Value : attr.value;
+      if (value !== undefined && value !== null && String(value).trim() !== '') {
+        return String(value).trim();
+      }
+    }
+  }
+  return null;
+}
+
 // MobiControl field casing/shape can vary by version; normalize to a flat object.
 function normalizeDevice(d) {
   if (typeof d !== 'object' || d === null) {
-    return { name: String(d), path: '', ids: {} };
+    return { name: String(d), path: '', ids: {}, attributeEmail: null };
   }
   const ids = {};
   for (const field of DEVICE_ID_FIELDS) {
@@ -222,6 +248,7 @@ function normalizeDevice(d) {
     name: pick(d, DEVICE_NAME_FIELDS) || '(unnamed device)',
     path: pick(d, ['Path', 'path', 'FullPath', 'fullPath']),
     ids,
+    attributeEmail: extractCustomAttributeEmail(d),
   };
 }
 
@@ -381,7 +408,10 @@ app.get('/groups', requireLogin, async (req, res) => {
 // All devices on the MobiControl server, with an optional multi-select
 // filter by device group (matched on the group's exact Path, same approach
 // used for the per-group counts on /groups) and the device's display name
-// swapped for the imported CSV email when a mapping exists.
+// swapped for its user email when one is available. Email source priority:
+// 1) the device's own "User Email" custom attribute (live from MobiControl),
+// 2) the imported CSV mapping (fallback, for devices missing that attribute),
+// 3) the MobiControl device name (last resort).
 app.get('/devices', requireLogin, async (req, res) => {
   const selectedGroups = req.query.groups
     ? (Array.isArray(req.query.groups) ? req.query.groups : [req.query.groups])
@@ -397,10 +427,12 @@ app.get('/devices', requireLogin, async (req, res) => {
     const rawDevices = await fetchAllDevices(req.session.accessToken);
     let devices = rawDevices.map((d) => {
       const norm = normalizeDevice(d);
-      const email = findMappedEmail(norm, deviceEmailMap);
+      const csvEmail = findMappedEmail(norm, deviceEmailMap);
+      const email = norm.attributeEmail || csvEmail;
       return {
         display: email || norm.name,
         mapped: Boolean(email),
+        source: norm.attributeEmail ? 'attribute' : csvEmail ? 'csv' : null,
         name: norm.name,
         path: norm.path,
         id: norm.ids.DeviceId || norm.ids.Id || norm.ids.Udid || norm.ids.ReferenceId || Object.values(norm.ids)[0] || '',
@@ -438,23 +470,6 @@ app.get('/devices', requireLogin, async (req, res) => {
 
 app.get('/devices/import', requireLogin, (req, res) => {
   res.render('import', { error: null, success: null, lastImport, username: req.session.username });
-});
-
-// TEMPORARY diagnostic route: dump raw field names + a couple of sample
-// devices so we can find which field holds the assigned/enrolled user's
-// email on this MobiControl server. Remove once that's confirmed.
-app.get('/debug/device-sample', requireLogin, async (req, res) => {
-  try {
-    const devices = await fetchAllDevices(req.session.accessToken);
-    const sample = devices.slice(0, 3);
-    const allKeys = new Set();
-    for (const d of devices) {
-      if (d && typeof d === 'object') Object.keys(d).forEach((k) => allKeys.add(k));
-    }
-    res.json({ totalDevices: devices.length, allFieldNames: Array.from(allKeys).sort(), sample });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
 });
 
 function uploadErrorMessage(err) {
