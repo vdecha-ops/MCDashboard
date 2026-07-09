@@ -2,7 +2,7 @@
   "name": "mobicontrol-device-groups",
   "version": "1.0.0",
   "private": true,
-  "description": "Sign in to SOTI MobiControl's REST API and list device groups.",
+  "description": "Sign in to SOTI MobiControl and explore an uploaded Telecom Data Usage report, enriched with live device user email and group path.",
   "engines": {
     "node": ">=18"
   },
@@ -13,7 +13,6 @@
     "dotenv": "^16.4.5",
     "ejs": "^3.1.10",
     "express": "^4.19.2",
-    "express-session": "^1.18.0",
-    "multer": "^1.4.5-lts.1"
+    "express-session": "^1.18.0"
   }
 }

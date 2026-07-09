@@ -1,8 +1,12 @@
-# MobiControl Device Groups Viewer (Node.js)
+# Telecom Data Usage Dashboard (Node.js)
 
-A small Node/Express app that signs in to SOTI MobiControl's REST API and
-lists the server's device groups and devices. No Python required — built to
-deploy on Render's free web service tier.
+A small Node/Express app that signs in to SOTI MobiControl's REST API, then lets
+the signed-in user upload a MobiControl "Telecom Data Usage" report export and
+explore data consumption by device and application. The report is parsed
+entirely in the browser (PapaParse) — it's never uploaded to this server. Each
+device in the report is cross-referenced against live MobiControl data (fetched
+once via `/api/device-lookup`) to show the assigned user's email and device
+group path instead of the raw device name.
 
 ## How it works
 
@@ -11,29 +15,41 @@ MobiControl's API uses OAuth2 with two sets of credentials:
 - **API client (Client ID / Client Secret)** — identifies your integration, set once as environment variables.
 - **User credentials (username / password)** — a MobiControl administrator account, entered by whoever uses the app.
 
-On login the app calls:
+On login the app calls `POST {server}/MobiControl/api/token` (Basic auth with
+the API client, body `grant_type=password&username=...&password=...`) to get
+an access token, kept only in the signed session cookie (never written to
+disk). The password is never stored or logged.
 
-1. `POST {server}/MobiControl/api/token` with `Authorization: Basic base64(client_id:client_secret)` and body `grant_type=password&username=...&password=...` to get an access token.
-2. `GET {server}/MobiControl/api/devicegroups` with `Authorization: Bearer {access_token}` to list device groups.
+After login, `/dashboard` renders the upload page. Its client-side script:
 
-The access token is kept only in the signed session cookie (server-side), never written to disk. The password is never stored or logged.
+1. Calls `GET /api/device-lookup` (server-side, using the session's access
+   token) to fetch every device's name, "User Email" custom attribute value,
+   and group Path.
+2. Parses the uploaded CSV with PapaParse, locates the real header row (the
+   MobiControl export has a few title/summary rows above it, and the header's
+   columns land at different indices depending on merged cells in the source
+   spreadsheet — the app searches for the row containing both "Device Name"
+   and "Volume" instead of assuming fixed column positions).
+3. Aggregates usage by device and by application, joins each device's rows to
+   the `/api/device-lookup` result by name, and renders summary stats, two
+   Chart.js charts (top devices by volume, volume by application), a
+   multi-select device-group filter, and a table.
 
-## Pages
+## Where the user email comes from
 
-- **`/groups`** — device groups with a per-group device count.
-- **`/devices`** — every device on the server. Supports filtering by one or more device groups (checkboxes, multi-select) via `?groups=<path>&groups=<path>...`. Each row shows the mapped user email (from the imported CSV) if one exists for that device, otherwise falls back to the device's MobiControl name/alias, tagged "unmapped".
-- **`/devices/import`** — upload a CSV mapping device ID to user email (see below).
+Each device's assigned user email lives in MobiControl as a per-device
+**Custom Attribute** (Console > Data > Custom Attributes) named "User Email"
+on this deployment — not a built-in device field. `extractCustomAttributeEmail()`
+in `server.js` reads the device's `CustomAttributes` array and matches any
+attribute whose name contains "email" (case-insensitive), so it isn't tied to
+that exact label if a deployment names it differently.
 
-## Device &rarr; email CSV import
+## Report format
 
-Upload a two-column CSV at `/devices/import`:
-
-- A device identifier column (`DeviceId`, `Udid`, `SerialNumber`, `IMEI`, etc. — any of these).
-- An email column.
-
-A header row is auto-detected if present (matched by column names containing "device"/"udid"/"serial"/"imei" and "mail"); otherwise the first column is treated as the device ID and the second as the email. On `/devices`, each device is matched against the imported map by checking every id-like field MobiControl returns for that device (Device ID, UDID, Serial Number, IMEI, ReferenceId), so the CSV doesn't need to target one specific field.
-
-The mapping is kept in memory only (same approach as the session store) — it resets on a server restart/redeploy, so re-upload the CSV after those. This keeps the app dependency-free; swap in a real datastore later if the mapping needs to persist longer.
+Expects a MobiControl "Telecom Data Usage" report export (CSV). Recognized
+columns (matched by header text, not position): `Date & Time`, `Device Name`,
+`Upload (KB)`, `Download (KB)`, `Volume (KB)`, `Type`, `Roaming`, `Carrier`,
+`Application ID`. Only `Device Name` and `Volume` are required to be present.
 
 ## Run locally
 
@@ -49,7 +65,7 @@ Requires Node.js 18+ (for built-in `fetch`).
    ```
    npm start
    ```
-5. Open `http://localhost:3000` and sign in with a MobiControl administrator username and password.
+5. Open `http://localhost:3000`, sign in, then upload a Telecom Data Usage CSV export.
 
 ## Deploy to Render (free tier)
 
@@ -68,11 +84,10 @@ Requires Node.js 18+ (for built-in `fetch`).
    - `SESSION_SECRET` (any long random string)
 5. Deploy. Render assigns a public `https://<your-service>.onrender.com` URL automatically and sets `PORT` for you.
 
-Note: Render's free web services spin down after periods of inactivity and take a few seconds to wake back up on the next request — expected behavior on the free tier, not a bug.
+Note: Render's free web services spin down after periods of inactivity and take a few seconds to wake back up on the next request — expected behavior on the free tier, not a bug. Sessions are also in-memory only, so a redeploy or restart signs everyone out.
 
 ## Notes
 
-- Device group field names can vary slightly between MobiControl versions; the app normalizes common variants (`Name`/`name`, `Id`/`ID`, `Path`/`FullPath`, etc.) in `normalizeGroup()` in `server.js`. Adjust there if your server uses different field names.
-- Device field names are normalized the same way in `normalizeDevice()`/`DEVICE_ID_FIELDS`/`DEVICE_NAME_FIELDS` — extend those lists if a server exposes different field names for device id/name.
+- Device field names can vary slightly between MobiControl versions; `pick()` in `server.js` tries several common variants for device name/path. Extend `DEVICE_NAME_FIELDS` if a server uses a different field.
 - If your on-premises server uses a self-signed certificate, the built-in `fetch` will reject it. The simplest (insecure) workaround is setting `NODE_TLS_REJECT_UNAUTHORIZED=0` as an environment variable — only do this if you understand the risk, and prefer fixing the certificate instead.
-- Device counting/listing pages through `/devices` using `skip`/`take` (confirmed pagination params) and match a device to its group by exact `Path` string, since MobiControl's group-filter query params on `/devices` don't actually filter server-side.
+- `/api/device-lookup` pages through `/devices` using `skip`/`take` (MobiControl's documented pagination params for that endpoint).
