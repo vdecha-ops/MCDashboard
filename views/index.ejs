@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MobiControl Device Groups</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="page">
+    <h1>MobiControl Device Groups</h1>
+    <p class="subtitle">Server: <%= serverUrl %></p>
+
+    <div class="card">
+      <% if (error) { %>
+        <div class="error"><%= error %></div>
+      <% } %>
+
+      <form method="post" action="/login">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" autocomplete="username" required>
+
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required>
+
+        <button type="submit">Sign in</button>
+      </form>
+
+      <p class="hint">
+        Sign in with your MobiControl administrator username and password.
+        The API client (Client ID / Secret) is preconfigured on the server.
+      </p>
+    </div>
+  </div>
+</body>
+</html>
