@@ -103,6 +103,21 @@
             <thead id="topListThead"></thead>
             <tbody id="topListBody"></tbody>
           </table>
+          <p class="hint">Click a name to see its breakdown.</p>
+        </div>
+
+        <div class="card top-list-card hidden" id="drillDownCard">
+          <div class="top-list-header">
+            <h2 class="chart-title" id="drillTitle"></h2>
+            <a href="#" id="drillBackLink" class="clear-inline">← back to top list</a>
+          </div>
+
+          <canvas id="drillChart" height="220"></canvas>
+
+          <table>
+            <thead id="drillThead"></thead>
+            <tbody id="drillBody"></tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -280,6 +295,7 @@
     var reportDateRange = { min: null, max: null };
     var filters = { dateFrom: null, dateTo: null, network: 'all', topN: 10, selectedPaths: [] };
     var topChart = null;
+    var drillChart = null;
     var lastAgg = null;
     var currentTab = 'apps';
 
@@ -316,12 +332,93 @@
     }
 
     function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+    function escAttr(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+
+    // Groups already-filtered rows by an arbitrary key (app id, or user/device
+    // identity) for the drill-down view -- e.g. "which users used this app"
+    // or "which apps did this user use".
+    function aggregateGroup(rows, keyFn) {
+      var stats = {}, order = [];
+      rows.forEach(function (r) {
+        var k = keyFn(r);
+        if (!stats[k]) { stats[k] = { key: k, volume: 0, upload: 0, download: 0, records: 0 }; order.push(k); }
+        var s = stats[k];
+        s.volume += r.volume; s.upload += r.upload; s.download += r.download; s.records += 1;
+      });
+      return order.map(function (k) { return stats[k]; }).sort(function (a, b) { return b.volume - a.volume; });
+    }
+
+    function hideDrillDown() {
+      document.getElementById('drillDownCard').classList.add('hidden');
+      if (drillChart) { drillChart.destroy(); drillChart = null; }
+    }
+
+    // Click-through from a Top Applications row -> which users consumed that
+    // app; or from a Top Users row -> which apps that user consumed. Mirrors
+    // the reference dashboard's "click a row to see its breakdown" behaviour.
+    function showDrillDown(type, key) {
+      var filtered = filterRows(lastRows);
+      var rows, title, colLabel, groupKeyFn;
+
+      if (type === 'app') {
+        rows = filtered.filter(function (r) { return r.appId === key; });
+        groupKeyFn = function (r) {
+          var lookup = lookupFor(r.deviceName);
+          return lookup && lookup.email ? lookup.email : r.deviceName;
+        };
+        title = 'Users using ' + key;
+        colLabel = 'User';
+      } else {
+        rows = filtered.filter(function (r) { return r.deviceName === key; });
+        groupKeyFn = function (r) { return r.appId; };
+        var lookup = lookupFor(key);
+        title = 'Applications used by ' + (lookup && lookup.email ? lookup.email : key);
+        colLabel = 'Application';
+      }
+
+      var grouped = aggregateGroup(rows, groupKeyFn).slice(0, filters.topN);
+
+      document.getElementById('drillTitle').textContent = title;
+      var thead = document.getElementById('drillThead');
+      var tbody = document.getElementById('drillBody');
+      thead.innerHTML = '<tr><th>#</th><th>' + colLabel + '</th><th>Upload</th><th>Download</th><th>Total</th></tr>';
+      tbody.innerHTML = grouped.map(function (g, i) {
+        return '<tr><td>' + (i + 1) + '</td><td>' + esc(g.key) + '</td><td>' + formatVolume(g.upload) +
+          '</td><td>' + formatVolume(g.download) + '</td><td>' + formatVolume(g.volume) + '</td></tr>';
+      }).join('') || '<tr><td colspan="5" class="empty">No data for this filter.</td></tr>';
+
+      var ctx = document.getElementById('drillChart').getContext('2d');
+      if (drillChart) drillChart.destroy();
+      drillChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: grouped.map(function (g) { return g.key; }),
+          datasets: [
+            { label: 'Upload', data: grouped.map(function (g) { return g.upload; }), backgroundColor: '#4fd1e5' },
+            { label: 'Download', data: grouped.map(function (g) { return g.download; }), backgroundColor: '#f5a623' },
+          ],
+        },
+        options: {
+          indexAxis: 'y',
+          plugins: { legend: { display: true, labels: { color: '#e8eef7', boxWidth: 12 } } },
+          scales: {
+            x: { stacked: true, ticks: { color: '#8597b0' }, grid: { color: '#26334a' } },
+            y: { stacked: true, ticks: { color: '#e8eef7' }, grid: { display: false } },
+          },
+        },
+      });
+
+      var card = document.getElementById('drillDownCard');
+      card.classList.remove('hidden');
+      card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
 
     // Renders the active tab's (Top Applications / Top Users) chart + table
     // from the already-computed, already-sorted lastAgg. Cheap enough to
     // re-run on every tab click without touching filters or re-aggregating.
     function renderTopList() {
       if (!lastAgg) return;
+      hideDrillDown();
       var isApps = currentTab === 'apps';
       var all = isApps ? lastAgg.apps : lastAgg.devices;
       var top = all.slice(0, filters.topN);
@@ -336,7 +433,7 @@
       if (isApps) {
         thead.innerHTML = '<tr><th>#</th><th>Application</th><th>Upload</th><th>Download</th><th>Total</th></tr>';
         tbody.innerHTML = top.map(function (a, i) {
-          return '<tr><td>' + (i + 1) + '</td><td>' + esc(a.name) + '</td><td>' + formatVolume(a.upload) +
+          return '<tr><td>' + (i + 1) + '</td><td><a href="#" class="row-link" data-type="app" data-key="' + escAttr(a.name) + '">' + esc(a.name) + '</a></td><td>' + formatVolume(a.upload) +
             '</td><td>' + formatVolume(a.download) + '</td><td>' + formatVolume(a.volume) + '</td></tr>';
         }).join('') || '<tr><td colspan="5" class="empty">No applications match the current filter.</td></tr>';
       } else {
@@ -344,7 +441,7 @@
         tbody.innerHTML = top.map(function (d, i) {
           var display = d.email || d.name;
           var tag = d.email ? '' : ' <span class="tag">unmapped</span>';
-          return '<tr><td>' + (i + 1) + '</td><td>' + esc(display) + tag + '</td><td>' + esc(d.path) + '</td><td>' +
+          return '<tr><td>' + (i + 1) + '</td><td><a href="#" class="row-link" data-type="user" data-key="' + escAttr(d.name) + '">' + esc(display) + '</a>' + tag + '</td><td>' + esc(d.path) + '</td><td>' +
             formatVolume(d.upload) + '</td><td>' + formatVolume(d.download) + '</td><td>' + formatVolume(d.volume) + '</td></tr>';
         }).join('') || '<tr><td colspan="6" class="empty">No users match the current filter.</td></tr>';
       }
@@ -464,6 +561,21 @@
         currentTab = btn.dataset.tab;
         renderTopList();
       });
+    });
+
+    // Click-through: app name -> which users consumed it; user name -> which
+    // apps that user consumed. Delegated on the tbody since rows are
+    // re-rendered on every Apply/tab switch.
+    document.getElementById('topListBody').addEventListener('click', function (e) {
+      var link = e.target.closest('.row-link');
+      if (!link) return;
+      e.preventDefault();
+      showDrillDown(link.dataset.type, link.dataset.key);
+    });
+
+    document.getElementById('drillBackLink').addEventListener('click', function (e) {
+      e.preventDefault();
+      hideDrillDown();
     });
 
     // ---- Filter bar wiring ----
