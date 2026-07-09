@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>All Devices - MobiControl</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="page page-wide">
+    <div class="header-row">
+      <div>
+        <h1>All Devices</h1>
+        <p class="subtitle">Signed in as <%= username %></p>
+      </div>
+      <nav class="nav-links">
+        <a href="/groups">Device Groups</a>
+        <a href="/devices/import">Import CSV</a>
+        <a href="/logout">Sign out</a>
+      </nav>
+    </div>
+
+    <% if (error) { %>
+      <div class="error"><%= error %></div>
+    <% } %>
+
+    <% if (lastImport) { %>
+      <p class="hint">
+        Showing user email from "<%= lastImport.filename %>" (<%= lastImport.mappedCount %> device(s) mapped,
+        imported <%= new Date(lastImport.importedAt).toLocaleString() %>). Devices without a match still show
+        their MobiControl device name. <a href="/devices/import">Re-import</a>
+      </p>
+    <% } else { %>
+      <p class="hint">
+        No CSV has been imported yet, so devices are shown by their MobiControl device name.
+        <a href="/devices/import">Import a device-id-to-email CSV</a> to show user email instead.
+      </p>
+    <% } %>
+
+    <div class="devices-layout">
+      <aside class="card filter-card">
+        <form method="get" action="/devices">
+          <h2 class="filter-title">Filter by group</h2>
+          <% if (deviceGroups && deviceGroups.length > 0) { %>
+            <div class="filter-list">
+              <% deviceGroups.forEach(function(g) { %>
+                <label class="filter-option">
+                  <input
+                    type="checkbox"
+                    name="groups"
+                    value="<%= g.path %>"
+                    <%= selectedGroups.includes(g.path) ? 'checked' : '' %>
+                  >
+                  <span><%= g.name %></span>
+                </label>
+              <% }); %>
+            </div>
+          <% } else { %>
+            <p class="empty">No device groups found.</p>
+          <% } %>
+          <button type="submit">Apply filter</button>
+          <a class="clear-link" href="/devices">Clear filter</a>
+        </form>
+      </aside>
+
+      <div class="card devices-card">
+        <% if (devices && devices.length > 0) { %>
+          <table>
+            <thead>
+              <tr>
+                <th>User / Device</th>
+                <th>Group Path</th>
+                <th>Device ID</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% devices.forEach(function(d) { %>
+              <tr>
+                <td>
+                  <%= d.display %>
+                  <% if (!d.mapped) { %><span class="tag">unmapped</span><% } %>
+                </td>
+                <td><%= d.path %></td>
+                <td><%= d.id %></td>
+              </tr>
+              <% }); %>
+            </tbody>
+          </table>
+        <% } else if (!error) { %>
+          <p class="empty">No devices found<%= selectedGroups.length ? ' for the selected group(s).' : '.' %></p>
+        <% } %>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

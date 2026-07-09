@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Import Device Emails - MobiControl</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="page">
+    <div class="header-row">
+      <div>
+        <h1>Import Device &rarr; Email CSV</h1>
+        <p class="subtitle">Signed in as <%= username %></p>
+      </div>
+      <nav class="nav-links">
+        <a href="/devices">All Devices</a>
+        <a href="/groups">Device Groups</a>
+        <a href="/logout">Sign out</a>
+      </nav>
+    </div>
+
+    <div class="card">
+      <% if (error) { %>
+        <div class="error"><%= error %></div>
+      <% } %>
+      <% if (success) { %>
+        <div class="success"><%= success %></div>
+      <% } %>
+
+      <form method="post" action="/devices/import" enctype="multipart/form-data">
+        <label for="csvFile">CSV file</label>
+        <input type="file" id="csvFile" name="csvFile" accept=".csv,text/csv" required>
+        <button type="submit">Upload and import</button>
+      </form>
+
+      <p class="hint">
+        The CSV needs two columns: a device identifier and the user's email. A header row with
+        columns like <code>DeviceId</code>/<code>Udid</code> and <code>Email</code> is detected
+        automatically; otherwise the first column is treated as the device ID and the second as
+        the email. The device ID is matched against every ID-like field MobiControl returns for a
+        device (Device ID, UDID, Serial Number, IMEI, etc.), so it doesn't need to match one exact
+        field.
+      </p>
+
+      <% if (lastImport) { %>
+        <p class="hint">
+          Current mapping: <%= lastImport.mappedCount %> device(s) from "<%= lastImport.filename %>",
+          imported <%= new Date(lastImport.importedAt).toLocaleString() %>. This resets on server
+          restart/redeploy — re-upload the CSV if the mapping disappears from <a href="/devices">All Devices</a>.
+        </p>
+      <% } %>
+    </div>
+  </div>
+</body>
+</html>
