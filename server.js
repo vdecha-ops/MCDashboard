@@ -25,6 +25,13 @@ const config = require('./config');
 
 const app = express();
 
+// Lightweight request logging so every hit shows up in Render logs, even
+// ones that never reach MobiControl (useful for debugging "nothing happens").
+app.use((req, res, next) => {
+  console.log(`[req] ${new Date().toISOString()} ${req.method} ${req.path}`);
+  next();
+});
+
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(express.urlencoded({ extended: false }));
