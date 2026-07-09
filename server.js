@@ -55,13 +55,20 @@ async function getAccessToken(username, password) {
     headers: {
       Authorization: `Basic ${basic}`,
       'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+      'User-Agent': 'MobiControl-Device-Groups-Viewer/1.0',
     },
     body: body.toString(),
   });
 
   if (!resp.ok) {
     const bodyText = await resp.text().catch(() => '');
-    console.error(`[token] ${resp.status} ${resp.statusText} from ${apiBase()}/token :: ${bodyText.slice(0, 500)}`);
+    const headerDump = Array.from(resp.headers.entries())
+      .map(([k, v]) => `${k}=${v}`)
+      .join(', ');
+    console.error(
+      `[token] ${resp.status} ${resp.statusText} from ${apiBase()}/token :: headers[${headerDump}] :: body[${bodyText.slice(0, 500)}]`
+    );
     const err = new Error(`Token request failed with status ${resp.status}`);
     err.status = resp.status;
     throw err;
@@ -71,12 +78,21 @@ async function getAccessToken(username, password) {
 
 async function fetchDeviceGroups(accessToken) {
   const resp = await fetch(`${apiBase()}/devicegroups`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+      'User-Agent': 'MobiControl-Device-Groups-Viewer/1.0',
+    },
   });
 
   if (!resp.ok) {
     const bodyText = await resp.text().catch(() => '');
-    console.error(`[devicegroups] ${resp.status} ${resp.statusText} from ${apiBase()}/devicegroups :: ${bodyText.slice(0, 500)}`);
+    const headerDump = Array.from(resp.headers.entries())
+      .map(([k, v]) => `${k}=${v}`)
+      .join(', ');
+    console.error(
+      `[devicegroups] ${resp.status} ${resp.statusText} from ${apiBase()}/devicegroups :: headers[${headerDump}] :: body[${bodyText.slice(0, 500)}]`
+    );
     const err = new Error(`Device groups request failed with status ${resp.status}`);
     err.status = resp.status;
     throw err;
