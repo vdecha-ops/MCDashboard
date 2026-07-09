@@ -327,7 +327,9 @@ select {
 .apply-btn {
   width: auto;
   margin: 0;
-  padding: 9px 20px;
+  padding: 11px 22px;
+  border-radius: 9px;
+  font-weight: 700;
 }
 
 .filter-pill {
@@ -378,10 +380,16 @@ select {
   gap: 20px;
 }
 
-.filter-title, .chart-title {
+.filter-title {
   font-size: 0.9rem;
   margin: 0 0 12px 0;
   font-weight: 600;
+}
+
+.chart-title {
+  font-size: 16px;
+  margin: 0 0 12px 0;
+  font-weight: 700;
 }
 
 .filter-list {
@@ -438,7 +446,7 @@ select {
   border: none;
   border-bottom: 2px solid transparent;
   border-radius: 0;
-  font-size: 0.92rem;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
 }
