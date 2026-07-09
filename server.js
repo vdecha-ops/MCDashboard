@@ -1,0 +1,163 @@
+/**
+ * MobiControl Device Group Viewer (Node.js / Express)
+ * -----------------------------------------------------
+ * Signs in to the SOTI MobiControl REST API using an API client (Client ID /
+ * Client Secret, set via environment variables) plus a MobiControl
+ * administrator username/password (entered at login), and lists the
+ * server's device groups.
+ *
+ * Auth flow (SOTI MobiControl REST API, Resource Owner / password grant):
+ *   1. POST {server}/MobiControl/api/token
+ *        Header: Authorization: Basic base64(client_id:client_secret)
+ *        Body:   grant_type=password&username=...&password=...
+ *        -> { access_token, token_type, expires_in }
+ *   2. GET {server}/MobiControl/api/devicegroups
+ *        Header: Authorization: Bearer {access_token}
+ *        -> list of device group objects
+ *
+ * Uses Node's built-in fetch (Node 18+) -- no HTTP client dependency needed.
+ */
+
+const path = require('path');
+const express = require('express');
+const session = require('express-session');
+const config = require('./config');
+
+const app = express();
+
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+app.use(express.urlencoded({ extended: false }));
+app.use(express.static(path.join(__dirname, 'public')));
+app.use(
+  session({
+    secret: config.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+    },
+  })
+);
+
+function apiBase() {
+  return config.MC_SERVER_URL.replace(/\/+$/, '') + '/MobiControl/api';
+}
+
+async function getAccessToken(username, password) {
+  const basic = Buffer.from(`${config.MC_CLIENT_ID}:${config.MC_CLIENT_SECRET}`).toString('base64');
+  const body = new URLSearchParams({ grant_type: 'password', username, password });
+
+  const resp = await fetch(`${apiBase()}/token`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${basic}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: body.toString(),
+  });
+
+  if (!resp.ok) {
+    const err = new Error(`Token request failed with status ${resp.status}`);
+    err.status = resp.status;
+    throw err;
+  }
+  return resp.json();
+}
+
+async function fetchDeviceGroups(accessToken) {
+  const resp = await fetch(`${apiBase()}/devicegroups`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!resp.ok) {
+    const err = new Error(`Device groups request failed with status ${resp.status}`);
+    err.status = resp.status;
+    throw err;
+  }
+  return resp.json();
+}
+
+function pick(obj, keys) {
+  for (const k of keys) {
+    if (obj[k] !== undefined && obj[k] !== null && obj[k] !== '') return obj[k];
+  }
+  return '';
+}
+
+// MobiControl field casing/shape can vary by version; normalize to a flat object.
+function normalizeGroup(g) {
+  if (typeof g !== 'object' || g === null) {
+    return { name: String(g), path: '', id: '', parentId: '', deviceCount: '' };
+  }
+  return {
+    name: pick(g, ['Name', 'name', 'GroupName', 'DisplayName']),
+    path: pick(g, ['Path', 'path', 'FullPath', 'fullPath']),
+    id: pick(g, ['Id', 'id', 'ID', 'GroupID', 'DeviceGroupId']),
+    parentId: pick(g, ['ParentId', 'parentId', 'ParentID', 'ParentGroupId']),
+    deviceCount: pick(g, ['DeviceCount', 'deviceCount', 'Count']),
+  };
+}
+
+function httpErrorMessage(status) {
+  if (status === 400 || status === 401) return 'Invalid username, password, or API client credentials.';
+  if (status === 403) return 'This account is not authorized to call the MobiControl API.';
+  if (status) return `MobiControl server returned an error (HTTP ${status}).`;
+  return 'MobiControl server returned an unexpected error.';
+}
+
+app.get('/', (req, res) => {
+  if (req.session.accessToken) return res.redirect('/groups');
+  res.render('index', { error: null, serverUrl: config.MC_SERVER_URL });
+});
+
+app.post('/login', async (req, res) => {
+  const username = (req.body.username || '').trim();
+  const password = req.body.password || '';
+
+  if (!username || !password) {
+    return res.render('index', {
+      error: 'Username and password are required.',
+      serverUrl: config.MC_SERVER_URL,
+    });
+  }
+
+  try {
+    const tokenData = await getAccessToken(username, password);
+    req.session.accessToken = tokenData.access_token;
+    req.session.username = username;
+    res.redirect('/groups');
+  } catch (err) {
+    const msg = err.status ? httpErrorMessage(err.status) : `Could not reach MobiControl server: ${err.message}`;
+    res.render('index', { error: msg, serverUrl: config.MC_SERVER_URL });
+  }
+});
+
+app.get('/groups', async (req, res) => {
+  if (!req.session.accessToken) return res.redirect('/');
+
+  try {
+    const data = await fetchDeviceGroups(req.session.accessToken);
+    const items = Array.isArray(data) ? data : data.Items || data.items || data.Data || data.data || [];
+    const deviceGroups = items.map(normalizeGroup);
+    res.render('groups', { error: null, deviceGroups, username: req.session.username });
+  } catch (err) {
+    if (err.status === 401) {
+      return req.session.destroy(() => res.redirect('/'));
+    }
+    const msg = err.status ? httpErrorMessage(err.status) : `Could not reach MobiControl server: ${err.message}`;
+    res.render('groups', { error: msg, deviceGroups: [], username: req.session.username });
+  }
+});
+
+app.get('/logout', (req, res) => {
+  req.session.destroy(() => res.redirect('/'));
+});
+
+app.listen(config.PORT, () => {
+  console.log(`Server running on port ${config.PORT}`);
+});
+
+module.exports = { apiBase, normalizeGroup, httpErrorMessage, pick };

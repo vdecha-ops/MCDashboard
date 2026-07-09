@@ -1,0 +1,18 @@
+# Render Blueprint - lets you deploy with "New > Blueprint" instead of
+# manually configuring the service. See README.md for the manual steps too.
+services:
+  - type: web
+    name: mobicontrol-device-groups
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: MC_SERVER_URL
+        sync: false
+      - key: MC_CLIENT_ID
+        sync: false
+      - key: MC_CLIENT_SECRET
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
