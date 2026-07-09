@@ -86,30 +86,22 @@
       </div>
 
       <div class="main-col">
-        <div class="charts-row">
-          <div class="card chart-card">
-            <h2 class="chart-title">Top devices by volume</h2>
-            <canvas id="deviceChart" height="220"></canvas>
+        <div class="card top-list-card">
+          <div class="tab-nav">
+            <button type="button" class="tab-btn active" data-tab="apps">Top Applications</button>
+            <button type="button" class="tab-btn" data-tab="users">Top Users</button>
           </div>
-          <div class="card chart-card">
-            <h2 class="chart-title">Volume by application</h2>
-            <canvas id="appChart" height="220"></canvas>
-          </div>
-        </div>
 
-        <div class="card table-card">
+          <div class="top-list-header">
+            <h2 class="chart-title" id="topListTitle">Top applications by data used</h2>
+            <span class="filter-pill" id="topListCount"></span>
+          </div>
+
+          <canvas id="topChart" height="260"></canvas>
+
           <table>
-            <thead>
-              <tr>
-                <th>User / Device</th>
-                <th>Group Path</th>
-                <th>Volume</th>
-                <th>Upload</th>
-                <th>Download</th>
-                <th>Records</th>
-              </tr>
-            </thead>
-            <tbody id="deviceTableBody"></tbody>
+            <thead id="topListThead"></thead>
+            <tbody id="topListBody"></tbody>
           </table>
         </div>
       </div>
@@ -253,9 +245,9 @@
         var ds = deviceStats[r.deviceName];
         ds.volume += r.volume; ds.upload += r.upload; ds.download += r.download; ds.records += 1;
 
-        if (!appStats[r.appId]) { appStats[r.appId] = { volume: 0, records: 0 }; appOrder.push(r.appId); }
+        if (!appStats[r.appId]) { appStats[r.appId] = { volume: 0, upload: 0, download: 0, records: 0 }; appOrder.push(r.appId); }
         var as = appStats[r.appId];
-        as.volume += r.volume; as.records += 1;
+        as.volume += r.volume; as.upload += r.upload; as.download += r.download; as.records += 1;
       });
 
       var devices = deviceOrder.map(function (name) {
@@ -287,7 +279,9 @@
     var lastRows = [];
     var reportDateRange = { min: null, max: null };
     var filters = { dateFrom: null, dateTo: null, network: 'all', topN: 10, selectedPaths: [] };
-    var deviceChart = null, appChart = null;
+    var topChart = null;
+    var lastAgg = null;
+    var currentTab = 'apps';
 
     function filterRows(rows) {
       return rows.filter(function (r) {
@@ -321,13 +315,68 @@
       }).join('');
     }
 
+    function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+
+    // Renders the active tab's (Top Applications / Top Users) chart + table
+    // from the already-computed, already-sorted lastAgg. Cheap enough to
+    // re-run on every tab click without touching filters or re-aggregating.
+    function renderTopList() {
+      if (!lastAgg) return;
+      var isApps = currentTab === 'apps';
+      var all = isApps ? lastAgg.apps : lastAgg.devices;
+      var top = all.slice(0, filters.topN);
+
+      document.getElementById('topListTitle').textContent = isApps ? 'Top applications by data used' : 'Top users by data used';
+      document.getElementById('topListCount').textContent =
+        top.length + ' shown · ' + all.length + ' ' + (isApps ? (all.length === 1 ? 'app' : 'apps') : (all.length === 1 ? 'user' : 'users'));
+
+      var thead = document.getElementById('topListThead');
+      var tbody = document.getElementById('topListBody');
+
+      if (isApps) {
+        thead.innerHTML = '<tr><th>#</th><th>Application</th><th>Upload</th><th>Download</th><th>Total</th></tr>';
+        tbody.innerHTML = top.map(function (a, i) {
+          return '<tr><td>' + (i + 1) + '</td><td>' + esc(a.name) + '</td><td>' + formatVolume(a.upload) +
+            '</td><td>' + formatVolume(a.download) + '</td><td>' + formatVolume(a.volume) + '</td></tr>';
+        }).join('') || '<tr><td colspan="5" class="empty">No applications match the current filter.</td></tr>';
+      } else {
+        thead.innerHTML = '<tr><th>#</th><th>User</th><th>Group Path</th><th>Upload</th><th>Download</th><th>Total</th></tr>';
+        tbody.innerHTML = top.map(function (d, i) {
+          var display = d.email || d.name;
+          var tag = d.email ? '' : ' <span class="tag">unmapped</span>';
+          return '<tr><td>' + (i + 1) + '</td><td>' + esc(display) + tag + '</td><td>' + esc(d.path) + '</td><td>' +
+            formatVolume(d.upload) + '</td><td>' + formatVolume(d.download) + '</td><td>' + formatVolume(d.volume) + '</td></tr>';
+        }).join('') || '<tr><td colspan="6" class="empty">No users match the current filter.</td></tr>';
+      }
+
+      var ctx = document.getElementById('topChart').getContext('2d');
+      if (topChart) topChart.destroy();
+      topChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: top.map(function (x) { return isApps ? x.name : (x.email || x.name); }),
+          datasets: [
+            { label: 'Upload', data: top.map(function (x) { return x.upload; }), backgroundColor: '#4fd1e5' },
+            { label: 'Download', data: top.map(function (x) { return x.download; }), backgroundColor: '#f5a623' },
+          ],
+        },
+        options: {
+          indexAxis: 'y',
+          plugins: { legend: { display: true, labels: { color: '#e8eef7', boxWidth: 12 } } },
+          scales: {
+            x: { stacked: true, ticks: { color: '#8597b0' }, grid: { color: '#26334a' } },
+            y: { stacked: true, ticks: { color: '#e8eef7' }, grid: { display: false } },
+          },
+        },
+      });
+    }
+
     function renderAll() {
       var filtered = filterRows(lastRows);
       var agg = aggregate(filtered);
-      var devices = agg.devices.slice().sort(function (a, b) { return b.volume - a.volume; });
-      var apps = agg.apps.slice().sort(function (a, b) { return b.volume - a.volume; });
-      var topDevices = devices.slice(0, filters.topN);
-      var topApps = apps.slice(0, filters.topN);
+      agg.devices = agg.devices.slice().sort(function (a, b) { return b.volume - a.volume; });
+      agg.apps = agg.apps.slice().sort(function (a, b) { return b.volume - a.volume; });
+      lastAgg = agg;
 
       document.getElementById('statVolume').textContent = formatVolume(agg.totals.totalVolume);
       document.getElementById('statApps').textContent = agg.totals.uniqueApps;
@@ -342,47 +391,7 @@
       document.getElementById('filterPill').textContent =
         formatDate(filters.dateFrom || reportDateRange.min) + ' → ' + formatDate(filters.dateTo || reportDateRange.max) + ' · ' + networkLabel;
 
-      // Table
-      var tbody = document.getElementById('deviceTableBody');
-      function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
-      tbody.innerHTML = topDevices.map(function (d) {
-        var display = d.email || d.name;
-        var tag = d.email ? '' : '<span class="tag">unmapped</span>';
-        return '<tr><td>' + esc(display) + ' ' + tag + '</td><td>' + esc(d.path) + '</td><td>' +
-          formatVolume(d.volume) + '</td><td>' + formatVolume(d.upload) + '</td><td>' + formatVolume(d.download) +
-          '</td><td>' + d.records + '</td></tr>';
-      }).join('') || '<tr><td colspan="6" class="empty">No devices match the current filter.</td></tr>';
-
-      // Device chart
-      var deviceCtx = document.getElementById('deviceChart').getContext('2d');
-      if (deviceChart) deviceChart.destroy();
-      deviceChart = new Chart(deviceCtx, {
-        type: 'bar',
-        data: {
-          labels: topDevices.map(function (d) { return d.email || d.name; }),
-          datasets: [{ label: 'Volume (KB)', data: topDevices.map(function (d) { return d.volume; }), backgroundColor: '#7c8cff' }],
-        },
-        options: {
-          indexAxis: 'y',
-          plugins: { legend: { display: false } },
-          scales: {
-            x: { ticks: { color: '#8597b0' }, grid: { color: '#26334a' } },
-            y: { ticks: { color: '#e8eef7' }, grid: { display: false } },
-          },
-        },
-      });
-
-      // App chart
-      var appCtx = document.getElementById('appChart').getContext('2d');
-      if (appChart) appChart.destroy();
-      appChart = new Chart(appCtx, {
-        type: 'doughnut',
-        data: {
-          labels: topApps.map(function (a) { return a.name; }),
-          datasets: [{ data: topApps.map(function (a) { return a.volume; }), backgroundColor: ['#7c8cff', '#36d399', '#f5a623', '#ff7b7b', '#4fd1e5', '#c792ea', '#f781be', '#a3e635', '#5eead4', '#fbbf24'] }],
-        },
-        options: { plugins: { legend: { position: 'right', labels: { color: '#e8eef7', boxWidth: 12 } } } },
-      });
+      renderTopList();
     }
 
     function loadReport(result) {
@@ -445,6 +454,16 @@
     dropZone.addEventListener('drop', function (e) {
       var file = e.dataTransfer.files && e.dataTransfer.files[0];
       handleFile(file);
+    });
+
+    // ---- Top Applications / Top Users tab wiring ----
+    document.querySelectorAll('.tab-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        currentTab = btn.dataset.tab;
+        renderTopList();
+      });
     });
 
     // ---- Filter bar wiring ----
