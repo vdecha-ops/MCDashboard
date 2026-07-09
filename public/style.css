@@ -8,6 +8,9 @@
   --error-bg: #fef2f2;
   --error-border: #fca5a5;
   --error-text: #b91c1c;
+  --success-bg: #f0fdf4;
+  --success-border: #86efac;
+  --success-text: #15803d;
 }
 
 * { box-sizing: border-box; }
@@ -23,6 +26,10 @@ body {
   max-width: 760px;
   margin: 0 auto;
   padding: 48px 20px;
+}
+
+.page-wide {
+  max-width: 1080px;
 }
 
 h1 {
@@ -54,7 +61,8 @@ label {
 label:first-of-type { margin-top: 0; }
 
 input[type="text"],
-input[type="password"] {
+input[type="password"],
+input[type="file"] {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--border);
@@ -87,17 +95,37 @@ button:hover { background: #1d4ed8; }
   margin-bottom: 16px;
 }
 
+.success {
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  color: var(--success-text);
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 0.88rem;
+  margin-bottom: 16px;
+}
+
 .header-row {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .header-row a {
   font-size: 0.85rem;
   color: var(--muted);
   text-decoration: none;
+}
+
+.header-row a:hover { color: var(--accent); }
+
+.nav-links {
+  display: flex;
+  gap: 16px;
+  align-items: baseline;
 }
 
 table {
@@ -133,4 +161,91 @@ tr:last-child td { border-bottom: none; }
   color: var(--muted);
   font-size: 0.78rem;
   margin-top: 20px;
+  margin-bottom: 20px;
+  line-height: 1.5;
+}
+
+.hint code {
+  background: #eef1f4;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+
+.hint a { color: var(--accent); }
+
+/* Devices page layout: filter sidebar + table */
+.devices-layout {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.filter-card {
+  width: 240px;
+  flex-shrink: 0;
+  padding: 20px;
+}
+
+.devices-card {
+  flex: 1;
+  min-width: 0;
+  padding: 20px 28px;
+}
+
+.filter-title {
+  font-size: 0.9rem;
+  margin: 0 0 12px 0;
+}
+
+.filter-list {
+  max-height: 360px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.filter-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  font-weight: 400;
+  margin: 0;
+  cursor: pointer;
+}
+
+.filter-option input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+
+.clear-link {
+  display: block;
+  text-align: center;
+  margin-top: 10px;
+  font-size: 0.82rem;
+}
+
+.tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+@media (max-width: 720px) {
+  .devices-layout {
+    flex-direction: column;
+  }
+  .filter-card {
+    width: 100%;
+  }
 }
