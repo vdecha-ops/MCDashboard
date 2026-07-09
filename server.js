@@ -25,6 +25,12 @@ const config = require('./config');
 
 const app = express();
 
+// Render (like Heroku/Railway) terminates TLS at a reverse proxy and forwards
+// plain HTTP to the app. Without this, Express never sees the connection as
+// secure, so a "secure" session cookie is silently dropped and every login
+// appears to succeed but the session never sticks on the next request.
+app.set('trust proxy', 1);
+
 // Lightweight request logging so every hit shows up in Render logs, even
 // ones that never reach MobiControl (useful for debugging "nothing happens").
 app.use((req, res, next) => {
@@ -44,7 +50,9 @@ app.use(
     cookie: {
       httpOnly: true,
       sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      // 'auto' sets Secure only when the (proxy-forwarded) request is HTTPS,
+      // which now works correctly thanks to 'trust proxy' above.
+      secure: 'auto',
     },
   })
 );
