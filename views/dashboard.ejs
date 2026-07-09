@@ -334,6 +334,32 @@
     function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
     function escAttr(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
 
+    // Chart.js config shared by the top-list chart and the drill-down chart --
+    // colors, grid, axis and legend styling matched to the reference
+    // dashboard (sotidash.freehosting.dev): vertical stacked Upload/Download
+    // bars, #4cc3ff / #ffb648, #1c2840 grid, #8597b0 ticks/legend text.
+    function CHART_CONFIG(labels, uploadData, downloadData) {
+      return {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [
+            { label: 'Upload', data: uploadData, backgroundColor: '#4cc3ff' },
+            { label: 'Download', data: downloadData, backgroundColor: '#ffb648' },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          plugins: { legend: { labels: { color: '#8597b0' } } },
+          scales: {
+            x: { stacked: true, ticks: { color: '#8597b0', maxRotation: 60, minRotation: 30 }, grid: { color: '#1c2840' } },
+            y: { stacked: true, beginAtZero: true, ticks: { color: '#8597b0' }, grid: { color: '#1c2840' } },
+          },
+        },
+      };
+    }
+
     // Groups already-filtered rows by an arbitrary key (app id, or user/device
     // identity) for the drill-down view -- e.g. "which users used this app"
     // or "which apps did this user use".
@@ -389,24 +415,11 @@
 
       var ctx = document.getElementById('drillChart').getContext('2d');
       if (drillChart) drillChart.destroy();
-      drillChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: grouped.map(function (g) { return g.key; }),
-          datasets: [
-            { label: 'Upload', data: grouped.map(function (g) { return g.upload; }), backgroundColor: '#4fd1e5' },
-            { label: 'Download', data: grouped.map(function (g) { return g.download; }), backgroundColor: '#f5a623' },
-          ],
-        },
-        options: {
-          indexAxis: 'y',
-          plugins: { legend: { display: true, labels: { color: '#e8eef7', boxWidth: 12 } } },
-          scales: {
-            x: { stacked: true, ticks: { color: '#8597b0' }, grid: { color: '#26334a' } },
-            y: { stacked: true, ticks: { color: '#e8eef7' }, grid: { display: false } },
-          },
-        },
-      });
+      drillChart = new Chart(ctx, CHART_CONFIG(
+        grouped.map(function (g) { return g.key; }),
+        grouped.map(function (g) { return g.upload; }),
+        grouped.map(function (g) { return g.download; })
+      ));
 
       var card = document.getElementById('drillDownCard');
       card.classList.remove('hidden');
@@ -448,24 +461,11 @@
 
       var ctx = document.getElementById('topChart').getContext('2d');
       if (topChart) topChart.destroy();
-      topChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: top.map(function (x) { return isApps ? x.name : (x.email || x.name); }),
-          datasets: [
-            { label: 'Upload', data: top.map(function (x) { return x.upload; }), backgroundColor: '#4fd1e5' },
-            { label: 'Download', data: top.map(function (x) { return x.download; }), backgroundColor: '#f5a623' },
-          ],
-        },
-        options: {
-          indexAxis: 'y',
-          plugins: { legend: { display: true, labels: { color: '#e8eef7', boxWidth: 12 } } },
-          scales: {
-            x: { stacked: true, ticks: { color: '#8597b0' }, grid: { color: '#26334a' } },
-            y: { stacked: true, ticks: { color: '#e8eef7' }, grid: { display: false } },
-          },
-        },
-      });
+      topChart = new Chart(ctx, CHART_CONFIG(
+        top.map(function (x) { return isApps ? x.name : (x.email || x.name); }),
+        top.map(function (x) { return x.upload; }),
+        top.map(function (x) { return x.download; })
+      ));
     }
 
     function renderAll() {
