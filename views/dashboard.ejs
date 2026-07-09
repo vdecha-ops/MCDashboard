@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Telecom Data Usage Dashboard</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="page page-wide">
+    <div class="header-row">
+      <div>
+        <h1>Telecom Data Usage</h1>
+        <p class="sub">Upload a MobiControl usage export and explore consumption by device and app.</p>
+      </div>
+      <nav class="nav-links">
+        <span class="signed-in">Signed in as <%= username %></span>
+        <a href="/logout">Sign out</a>
+      </nav>
+    </div>
+
+    <div id="uploadCard" class="card">
+      <div id="dropZone" class="drop">
+        <div class="drop-title">Drop your CSV here</div>
+        <div class="drop-sub">or click to browse — the file is parsed in your browser, nothing is uploaded.</div>
+        <input type="file" id="fileInput" accept=".csv,text/csv" hidden>
+      </div>
+      <p class="hint">
+        Expects a MobiControl "Telecom Data Usage" report export (Device Name, Date &amp; Time, Volume (KB), Type,
+        Application ID). Any junk title/summary rows above or below the real header are skipped automatically.
+      </p>
+      <div id="err" class="error hidden"></div>
+      <div id="lookupStatus" class="hint"></div>
+    </div>
+
+    <div id="results" class="hidden">
+      <div class="stats-row">
+        <div class="card stat">
+          <div class="stat-label">Devices</div>
+          <div class="stat-value" id="statDevices">0</div>
+        </div>
+        <div class="card stat">
+          <div class="stat-label">Total Volume</div>
+          <div class="stat-value" id="statVolume">0</div>
+        </div>
+        <div class="card stat">
+          <div class="stat-label">Applications</div>
+          <div class="stat-value" id="statApps">0</div>
+        </div>
+        <div class="card stat">
+          <div class="stat-label">Records</div>
+          <div class="stat-value" id="statRecords">0</div>
+        </div>
+      </div>
+
+      <div class="dashboard-layout">
+        <aside class="card filter-card">
+          <h2 class="filter-title">Filter by group</h2>
+          <div id="groupFilterList" class="filter-list">
+            <p class="empty">No group data yet.</p>
+          </div>
+          <button type="button" id="applyFilterBtn">Apply filter</button>
+          <a class="clear-link" id="clearFilterBtn" href="#">Clear filter</a>
+        </aside>
+
+        <div class="main-col">
+          <div class="charts-row">
+            <div class="card chart-card">
+              <h2 class="chart-title">Top devices by volume</h2>
+              <canvas id="deviceChart" height="220"></canvas>
+            </div>
+            <div class="card chart-card">
+              <h2 class="chart-title">Volume by application</h2>
+              <canvas id="appChart" height="220"></canvas>
+            </div>
+          </div>
+
+          <div class="card table-card">
+            <table>
+              <thead>
+                <tr>
+                  <th>User / Device</th>
+                  <th>Group Path</th>
+                  <th>Volume</th>
+                  <th>Upload</th>
+                  <th>Download</th>
+                  <th>Records</th>
+                </tr>
+              </thead>
+              <tbody id="deviceTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    'use strict';
+
+    // ---- Device lookup (email + group path per device name), fetched once ----
+    var deviceLookup = {}; // lowercased device name -> { name, email, path }
+    var lookupReady = fetch('/api/device-lookup')
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        (data.devices || []).forEach(function (d) {
+          if (d && d.name) deviceLookup[d.name.trim().toLowerCase()] = d;
+        });
+        document.getElementById('lookupStatus').textContent =
+          Object.keys(deviceLookup).length + ' device(s) loaded from MobiControl for email/group matching.';
+      })
+      .catch(function (err) {
+        document.getElementById('lookupStatus').textContent =
+          'Could not load device list from MobiControl (' + err.message + '). Devices will show without email/group.';
+      });
+
+    // ---- Report parsing (mirrors the logic validated in test_parse.js) ----
+    function normCell(c) {
+      return String(c == null ? '' : c).trim();
+    }
+
+    function findHeaderRow(rows) {
+      for (var i = 0; i < Math.min(rows.length, 25); i++) {
+        var row = rows[i];
+        var hasDeviceName = false, hasVolume = false;
+        for (var j = 0; j < row.length; j++) {
+          var c = normCell(row[j]).toLowerCase();
+          if (/device\s*name/.test(c)) hasDeviceName = true;
+          if (/volume/.test(c)) hasVolume = true;
+        }
+        if (hasDeviceName && hasVolume) return i;
+      }
+      return -1;
+    }
+
+    function mapColumns(headerRow) {
+      var cols = {};
+      headerRow.forEach(function (cell, idx) {
+        var c = normCell(cell).toLowerCase();
+        if (cols.dateTime === undefined && /date/.test(c)) cols.dateTime = idx;
+        else if (cols.deviceName === undefined && /device\s*name/.test(c)) cols.deviceName = idx;
+        else if (cols.upload === undefined && /upload/.test(c)) cols.upload = idx;
+        else if (cols.download === undefined && /download/.test(c)) cols.download = idx;
+        else if (cols.volume === undefined && /volume/.test(c)) cols.volume = idx;
+        else if (cols.type === undefined && /^type$/.test(c)) cols.type = idx;
+        else if (cols.roaming === undefined && /roaming/.test(c)) cols.roaming = idx;
+        else if (cols.carrier === undefined && /carrier/.test(c)) cols.carrier = idx;
+        else if (cols.appId === undefined && /applic/.test(c)) cols.appId = idx;
+      });
+      return cols;
+    }
+
+    function toNumber(v) {
+      var n = parseFloat(String(v == null ? '' : v).replace(/,/g, '').trim());
+      return isFinite(n) ? n : 0;
+    }
+
+    function parseReport(rows) {
+      var headerIdx = findHeaderRow(rows);
+      if (headerIdx === -1) {
+        return { error: 'Could not find a header row with "Device Name" and "Volume" columns.' };
+      }
+      var cols = mapColumns(rows[headerIdx]);
+      var deviceStats = {};
+      var deviceOrder = [];
+      var appStats = {};
+      var appOrder = [];
+      var totalVolume = 0, totalUpload = 0, totalDownload = 0, totalRecords = 0;
+
+      for (var i = headerIdx + 1; i < rows.length; i++) {
+        var row = rows[i];
+        if (!row || row.length === 0) continue;
+        var deviceName = normCell(row[cols.deviceName]);
+        if (!deviceName) continue;
+
+        var volume = toNumber(row[cols.volume]);
+        var upload = cols.upload !== undefined ? toNumber(row[cols.upload]) : 0;
+        var download = cols.download !== undefined ? toNumber(row[cols.download]) : 0;
+        var appId = cols.appId !== undefined ? (normCell(row[cols.appId]) || '(unknown)') : '(unknown)';
+
+        totalVolume += volume; totalUpload += upload; totalDownload += download; totalRecords += 1;
+
+        if (!deviceStats[deviceName]) { deviceStats[deviceName] = { volume: 0, upload: 0, download: 0, records: 0 }; deviceOrder.push(deviceName); }
+        var ds = deviceStats[deviceName];
+        ds.volume += volume; ds.upload += upload; ds.download += download; ds.records += 1;
+
+        if (!appStats[appId]) { appStats[appId] = { volume: 0, records: 0 }; appOrder.push(appId); }
+        var as = appStats[appId];
+        as.volume += volume; as.records += 1;
+      }
+
+      return {
+        headerIdx: headerIdx, cols: cols,
+        totals: { totalVolume: totalVolume, totalUpload: totalUpload, totalDownload: totalDownload, totalRecords: totalRecords, uniqueDevices: deviceOrder.length, uniqueApps: appOrder.length },
+        deviceStats: deviceOrder.map(function (name) { return Object.assign({ name: name }, deviceStats[name]); }),
+        appStats: appOrder.map(function (name) { return Object.assign({ name: name }, appStats[name]); }),
+      };
+    }
+
+    function formatVolume(kb) {
+      if (kb >= 1024 * 1024) return (kb / (1024 * 1024)).toFixed(2) + ' GB';
+      if (kb >= 1024) return (kb / 1024).toFixed(2) + ' MB';
+      return kb.toFixed(1) + ' KB';
+    }
+
+    // ---- Rendering ----
+    var lastResult = null;
+    var deviceChart = null, appChart = null;
+    var selectedPaths = [];
+
+    function enrichedDevices(result) {
+      return result.deviceStats.map(function (d) {
+        var lookup = deviceLookup[d.name.trim().toLowerCase()];
+        return {
+          name: d.name,
+          email: lookup ? lookup.email : null,
+          path: lookup ? lookup.path : '',
+          volume: d.volume, upload: d.upload, download: d.download, records: d.records,
+        };
+      });
+    }
+
+    function renderGroupFilter(devices) {
+      var paths = Array.from(new Set(devices.map(function (d) { return d.path; }).filter(Boolean))).sort();
+      var list = document.getElementById('groupFilterList');
+      if (paths.length === 0) {
+        list.innerHTML = '<p class="empty">No group data available for these devices.</p>';
+        return;
+      }
+      list.innerHTML = paths.map(function (p) {
+        var esc = p.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        return '<label class="filter-option"><input type="checkbox" value="' + esc + '" class="groupCheckbox"> <span>' + esc + '</span></label>';
+      }).join('');
+    }
+
+    function currentSelectedPaths() {
+      return Array.from(document.querySelectorAll('.groupCheckbox:checked')).map(function (el) { return el.value; });
+    }
+
+    function render(result) {
+      lastResult = result;
+      var devices = enrichedDevices(result);
+      renderGroupFilter(devices);
+      draw(devices, result);
+      document.getElementById('results').classList.remove('hidden');
+    }
+
+    function draw(allDevices, result) {
+      var devices = selectedPaths.length > 0 ? allDevices.filter(function (d) { return selectedPaths.indexOf(d.path) !== -1; }) : allDevices;
+      devices = devices.slice().sort(function (a, b) { return b.volume - a.volume; });
+
+      var totalVolume = devices.reduce(function (s, d) { return s + d.volume; }, 0);
+      var totalRecords = devices.reduce(function (s, d) { return s + d.records; }, 0);
+
+      document.getElementById('statDevices').textContent = devices.length;
+      document.getElementById('statVolume').textContent = formatVolume(totalVolume);
+      document.getElementById('statApps').textContent = result.totals.uniqueApps;
+      document.getElementById('statRecords').textContent = totalRecords;
+
+      // Table
+      var tbody = document.getElementById('deviceTableBody');
+      tbody.innerHTML = devices.map(function (d) {
+        var display = d.email || d.name;
+        var tag = d.email ? '' : '<span class="tag">unmapped</span>';
+        function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+        return '<tr><td>' + esc(display) + ' ' + tag + '</td><td>' + esc(d.path) + '</td><td>' +
+          formatVolume(d.volume) + '</td><td>' + formatVolume(d.upload) + '</td><td>' + formatVolume(d.download) +
+          '</td><td>' + d.records + '</td></tr>';
+      }).join('') || '<tr><td colspan="6" class="empty">No devices match the current filter.</td></tr>';
+
+      // Device chart (top 10 by volume)
+      var top = devices.slice(0, 10);
+      var deviceCtx = document.getElementById('deviceChart').getContext('2d');
+      if (deviceChart) deviceChart.destroy();
+      deviceChart = new Chart(deviceCtx, {
+        type: 'bar',
+        data: {
+          labels: top.map(function (d) { return d.email || d.name; }),
+          datasets: [{ label: 'Volume (KB)', data: top.map(function (d) { return d.volume; }), backgroundColor: '#7c8cff' }],
+        },
+        options: {
+          indexAxis: 'y',
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#8597b0' }, grid: { color: '#26334a' } },
+            y: { ticks: { color: '#e8eef7' }, grid: { display: false } },
+          },
+        },
+      });
+
+      // App chart (top 8 by volume, filtered to selected devices' report rows
+      // isn't tracked per-app-per-device here, so this reflects the full
+      // report's app breakdown regardless of group filter)
+      var apps = result.appStats.slice().sort(function (a, b) { return b.volume - a.volume; }).slice(0, 8);
+      var appCtx = document.getElementById('appChart').getContext('2d');
+      if (appChart) appChart.destroy();
+      appChart = new Chart(appCtx, {
+        type: 'doughnut',
+        data: {
+          labels: apps.map(function (a) { return a.name; }),
+          datasets: [{ data: apps.map(function (a) { return a.volume; }), backgroundColor: ['#7c8cff', '#36d399', '#f5a623', '#ff7b7b', '#4fd1e5', '#c792ea', '#f781be', '#a3e635'] }],
+        },
+        options: { plugins: { legend: { position: 'right', labels: { color: '#e8eef7', boxWidth: 12 } } } },
+      });
+    }
+
+    // ---- File handling ----
+    function showError(msg) {
+      var el = document.getElementById('err');
+      if (!msg) { el.classList.add('hidden'); el.textContent = ''; return; }
+      el.textContent = msg;
+      el.classList.remove('hidden');
+    }
+
+    function handleFile(file) {
+      showError('');
+      if (!file) return;
+      Papa.parse(file, {
+        skipEmptyLines: false,
+        complete: function (results) {
+          lookupReady.finally(function () {
+            var parsed = parseReport(results.data);
+            if (parsed.error) { showError(parsed.error); return; }
+            if (parsed.totals.totalRecords === 0) {
+              showError('No usage rows found in this file (0 records with a device name). Check it\'s the right export.');
+            }
+            render(parsed);
+          });
+        },
+        error: function (err) {
+          showError('Could not read file: ' + err.message);
+        },
+      });
+    }
+
+    var dropZone = document.getElementById('dropZone');
+    var fileInput = document.getElementById('fileInput');
+    dropZone.addEventListener('click', function () { fileInput.click(); });
+    fileInput.addEventListener('change', function (e) { handleFile(e.target.files[0]); });
+    ['dragenter', 'dragover'].forEach(function (evt) {
+      dropZone.addEventListener(evt, function (e) { e.preventDefault(); dropZone.classList.add('drag'); });
+    });
+    ['dragleave', 'drop'].forEach(function (evt) {
+      dropZone.addEventListener(evt, function (e) { e.preventDefault(); dropZone.classList.remove('drag'); });
+    });
+    dropZone.addEventListener('drop', function (e) {
+      var file = e.dataTransfer.files && e.dataTransfer.files[0];
+      handleFile(file);
+    });
+
+    document.getElementById('applyFilterBtn').addEventListener('click', function () {
+      selectedPaths = currentSelectedPaths();
+      if (lastResult) draw(enrichedDevices(lastResult), lastResult);
+    });
+    document.getElementById('clearFilterBtn').addEventListener('click', function (e) {
+      e.preventDefault();
+      selectedPaths = [];
+      document.querySelectorAll('.groupCheckbox:checked').forEach(function (el) { el.checked = false; });
+      if (lastResult) draw(enrichedDevices(lastResult), lastResult);
+    });
+  })();
+  </script>
+</body>
+</html>
