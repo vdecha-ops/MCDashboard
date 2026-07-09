@@ -35,22 +35,47 @@
     </div>
 
     <div id="results" class="hidden">
-      <div class="stats-row">
-        <div class="card stat">
-          <div class="stat-label">Devices</div>
-          <div class="stat-value" id="statDevices">0</div>
+      <div class="card summary-bar">
+        <div class="stat-group"><div class="stat-value" id="statVolume">-</div><div class="stat-label">Total Volume</div></div>
+        <div class="stat-group"><div class="stat-value" id="statApps">-</div><div class="stat-label">Apps</div></div>
+        <div class="stat-group"><div class="stat-value" id="statDevices">-</div><div class="stat-label">Devices</div></div>
+        <div class="stat-group"><div class="stat-value" id="statGroups">-</div><div class="stat-label">Groups</div></div>
+        <div class="stat-group"><div class="stat-value" id="statDateRange">-</div><div class="stat-label">Date Range</div></div>
+        <div class="stat-group"><div class="stat-value" id="statReportCreated">-</div><div class="stat-label">Report Created</div></div>
+      </div>
+
+      <div class="card filter-bar">
+        <div class="filter-bar-row">
+          <div class="filter-field">
+            <label>From</label>
+            <input type="date" id="fromDate">
+          </div>
+          <div class="filter-field">
+            <label>To</label>
+            <input type="date" id="toDate">
+          </div>
+          <div class="filter-field">
+            <label>Network</label>
+            <div class="segmented" id="networkSeg">
+              <button type="button" class="seg-btn active" data-network="all">All</button>
+              <button type="button" class="seg-btn" data-network="wifi">Wi-Fi</button>
+              <button type="button" class="seg-btn" data-network="cellular">Cellular</button>
+            </div>
+          </div>
+          <div class="filter-field">
+            <label>Show Top</label>
+            <select id="topNSelect">
+              <option value="5">5</option>
+              <option value="10" selected>10</option>
+              <option value="20">20</option>
+              <option value="50">50</option>
+              <option value="999999">All</option>
+            </select>
+          </div>
         </div>
-        <div class="card stat">
-          <div class="stat-label">Total Volume</div>
-          <div class="stat-value" id="statVolume">0</div>
-        </div>
-        <div class="card stat">
-          <div class="stat-label">Applications</div>
-          <div class="stat-value" id="statApps">0</div>
-        </div>
-        <div class="card stat">
-          <div class="stat-label">Records</div>
-          <div class="stat-value" id="statRecords">0</div>
+        <div class="filter-bar-actions">
+          <button type="button" id="applyMainFilterBtn" class="apply-btn">Apply</button>
+          <span class="filter-pill" id="filterPill"></span>
         </div>
       </div>
 
@@ -60,8 +85,8 @@
           <div id="groupFilterList" class="filter-list">
             <p class="empty">No group data yet.</p>
           </div>
-          <button type="button" id="applyFilterBtn">Apply filter</button>
-          <a class="clear-link" id="clearFilterBtn" href="#">Clear filter</a>
+          <button type="button" id="applyGroupFilterBtn">Apply filter</button>
+          <a class="clear-link" id="clearGroupFilterBtn" href="#">Clear filter</a>
         </aside>
 
         <div class="main-col">
@@ -119,7 +144,11 @@
           'Could not load device list from MobiControl (' + err.message + '). Devices will show without email/group.';
       });
 
-    // ---- Report parsing (mirrors the logic validated in test_parse.js) ----
+    function lookupFor(deviceName) {
+      return deviceLookup[String(deviceName || '').trim().toLowerCase()] || null;
+    }
+
+    // ---- Report parsing ----
     function normCell(c) {
       return String(c == null ? '' : c).trim();
     }
@@ -160,45 +189,91 @@
       return isFinite(n) ? n : 0;
     }
 
-    function parseReport(rows) {
-      var headerIdx = findHeaderRow(rows);
+    function parseDate(v) {
+      var s = normCell(v);
+      if (!s) return null;
+      var d = new Date(s);
+      return isNaN(d.getTime()) ? null : d;
+    }
+
+    // Network classification is inferred from the "Type" column. MobiControl
+    // deployments vary in what values that column holds -- this matches the
+    // common "Wi-Fi" / "Cellular" (or "Mobile"/"Data"/3G-5G/LTE) wording.
+    // Rows whose Type doesn't match either are still counted under "All" but
+    // won't match the Wi-Fi/Cellular filter buttons specifically.
+    function classifyNetwork(typeVal) {
+      var t = normCell(typeVal).toLowerCase();
+      if (/wi-?fi/.test(t)) return 'wifi';
+      if (/cell|mobile|data|3g|4g|5g|lte/.test(t)) return 'cellular';
+      return 'other';
+    }
+
+    function parseReport(rawRows) {
+      var headerIdx = findHeaderRow(rawRows);
       if (headerIdx === -1) {
         return { error: 'Could not find a header row with "Device Name" and "Volume" columns.' };
       }
-      var cols = mapColumns(rows[headerIdx]);
-      var deviceStats = {};
-      var deviceOrder = [];
-      var appStats = {};
-      var appOrder = [];
-      var totalVolume = 0, totalUpload = 0, totalDownload = 0, totalRecords = 0;
+      var cols = mapColumns(rawRows[headerIdx]);
+      var rows = [];
 
-      for (var i = headerIdx + 1; i < rows.length; i++) {
-        var row = rows[i];
+      for (var i = headerIdx + 1; i < rawRows.length; i++) {
+        var row = rawRows[i];
         if (!row || row.length === 0) continue;
         var deviceName = normCell(row[cols.deviceName]);
         if (!deviceName) continue;
 
-        var volume = toNumber(row[cols.volume]);
-        var upload = cols.upload !== undefined ? toNumber(row[cols.upload]) : 0;
-        var download = cols.download !== undefined ? toNumber(row[cols.download]) : 0;
-        var appId = cols.appId !== undefined ? (normCell(row[cols.appId]) || '(unknown)') : '(unknown)';
-
-        totalVolume += volume; totalUpload += upload; totalDownload += download; totalRecords += 1;
-
-        if (!deviceStats[deviceName]) { deviceStats[deviceName] = { volume: 0, upload: 0, download: 0, records: 0 }; deviceOrder.push(deviceName); }
-        var ds = deviceStats[deviceName];
-        ds.volume += volume; ds.upload += upload; ds.download += download; ds.records += 1;
-
-        if (!appStats[appId]) { appStats[appId] = { volume: 0, records: 0 }; appOrder.push(appId); }
-        var as = appStats[appId];
-        as.volume += volume; as.records += 1;
+        rows.push({
+          deviceName: deviceName,
+          date: cols.dateTime !== undefined ? parseDate(row[cols.dateTime]) : null,
+          volume: toNumber(row[cols.volume]),
+          upload: cols.upload !== undefined ? toNumber(row[cols.upload]) : 0,
+          download: cols.download !== undefined ? toNumber(row[cols.download]) : 0,
+          appId: cols.appId !== undefined ? (normCell(row[cols.appId]) || '(unknown)') : '(unknown)',
+          network: cols.type !== undefined ? classifyNetwork(row[cols.type]) : 'other',
+        });
       }
 
+      return { headerIdx: headerIdx, cols: cols, rows: rows };
+    }
+
+    function fullDateRange(rows) {
+      var min = null, max = null;
+      rows.forEach(function (r) {
+        if (!r.date) return;
+        if (!min || r.date < min) min = r.date;
+        if (!max || r.date > max) max = r.date;
+      });
+      return { min: min, max: max };
+    }
+
+    function aggregate(rows) {
+      var deviceStats = {}, deviceOrder = [];
+      var appStats = {}, appOrder = [];
+      var totalVolume = 0, totalUpload = 0, totalDownload = 0, totalRecords = 0;
+
+      rows.forEach(function (r) {
+        totalVolume += r.volume; totalUpload += r.upload; totalDownload += r.download; totalRecords += 1;
+
+        if (!deviceStats[r.deviceName]) { deviceStats[r.deviceName] = { volume: 0, upload: 0, download: 0, records: 0 }; deviceOrder.push(r.deviceName); }
+        var ds = deviceStats[r.deviceName];
+        ds.volume += r.volume; ds.upload += r.upload; ds.download += r.download; ds.records += 1;
+
+        if (!appStats[r.appId]) { appStats[r.appId] = { volume: 0, records: 0 }; appOrder.push(r.appId); }
+        var as = appStats[r.appId];
+        as.volume += r.volume; as.records += 1;
+      });
+
+      var devices = deviceOrder.map(function (name) {
+        var lookup = lookupFor(name);
+        return Object.assign({ name: name, email: lookup ? lookup.email : null, path: lookup ? lookup.path : '' }, deviceStats[name]);
+      });
+      var apps = appOrder.map(function (name) { return Object.assign({ name: name }, appStats[name]); });
+      var groupCount = new Set(devices.map(function (d) { return d.path; }).filter(Boolean)).size;
+
       return {
-        headerIdx: headerIdx, cols: cols,
-        totals: { totalVolume: totalVolume, totalUpload: totalUpload, totalDownload: totalDownload, totalRecords: totalRecords, uniqueDevices: deviceOrder.length, uniqueApps: appOrder.length },
-        deviceStats: deviceOrder.map(function (name) { return Object.assign({ name: name }, deviceStats[name]); }),
-        appStats: appOrder.map(function (name) { return Object.assign({ name: name }, appStats[name]); }),
+        totals: { totalVolume: totalVolume, totalUpload: totalUpload, totalDownload: totalDownload, totalRecords: totalRecords, uniqueDevices: devices.length, uniqueApps: apps.length, uniqueGroups: groupCount },
+        devices: devices,
+        apps: apps,
       };
     }
 
@@ -208,80 +283,89 @@
       return kb.toFixed(1) + ' KB';
     }
 
-    // ---- Rendering ----
-    var lastResult = null;
-    var deviceChart = null, appChart = null;
-    var selectedPaths = [];
+    function formatDate(d) {
+      if (!d) return '—';
+      return d.toISOString().slice(0, 10);
+    }
 
-    function enrichedDevices(result) {
-      return result.deviceStats.map(function (d) {
-        var lookup = deviceLookup[d.name.trim().toLowerCase()];
-        return {
-          name: d.name,
-          email: lookup ? lookup.email : null,
-          path: lookup ? lookup.path : '',
-          volume: d.volume, upload: d.upload, download: d.download, records: d.records,
-        };
+    // ---- State ----
+    var lastRows = [];
+    var reportDateRange = { min: null, max: null };
+    var filters = { dateFrom: null, dateTo: null, network: 'all', topN: 10, selectedPaths: [] };
+    var deviceChart = null, appChart = null;
+
+    function filterRows(rows) {
+      return rows.filter(function (r) {
+        if (filters.dateFrom && r.date && r.date < filters.dateFrom) return false;
+        if (filters.dateTo && r.date && r.date > filters.dateTo) return false;
+        if (filters.network !== 'all' && r.network !== filters.network) return false;
+        if (filters.selectedPaths.length > 0) {
+          var lookup = lookupFor(r.deviceName);
+          var path = lookup ? lookup.path : '';
+          if (filters.selectedPaths.indexOf(path) === -1) return false;
+        }
+        return true;
       });
     }
 
-    function renderGroupFilter(devices) {
-      var paths = Array.from(new Set(devices.map(function (d) { return d.path; }).filter(Boolean))).sort();
+    function renderGroupFilterList(rows) {
+      var paths = new Set();
+      rows.forEach(function (r) {
+        var lookup = lookupFor(r.deviceName);
+        if (lookup && lookup.path) paths.add(lookup.path);
+      });
       var list = document.getElementById('groupFilterList');
-      if (paths.length === 0) {
+      var sorted = Array.from(paths).sort();
+      if (sorted.length === 0) {
         list.innerHTML = '<p class="empty">No group data available for these devices.</p>';
         return;
       }
-      list.innerHTML = paths.map(function (p) {
+      list.innerHTML = sorted.map(function (p) {
         var esc = p.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
         return '<label class="filter-option"><input type="checkbox" value="' + esc + '" class="groupCheckbox"> <span>' + esc + '</span></label>';
       }).join('');
     }
 
-    function currentSelectedPaths() {
-      return Array.from(document.querySelectorAll('.groupCheckbox:checked')).map(function (el) { return el.value; });
-    }
+    function renderAll() {
+      var filtered = filterRows(lastRows);
+      var agg = aggregate(filtered);
+      var devices = agg.devices.slice().sort(function (a, b) { return b.volume - a.volume; });
+      var apps = agg.apps.slice().sort(function (a, b) { return b.volume - a.volume; });
+      var topDevices = devices.slice(0, filters.topN);
+      var topApps = apps.slice(0, filters.topN);
 
-    function render(result) {
-      lastResult = result;
-      var devices = enrichedDevices(result);
-      renderGroupFilter(devices);
-      draw(devices, result);
-      document.getElementById('results').classList.remove('hidden');
-    }
+      document.getElementById('statVolume').textContent = formatVolume(agg.totals.totalVolume);
+      document.getElementById('statApps').textContent = agg.totals.uniqueApps;
+      document.getElementById('statDevices').textContent = agg.totals.uniqueDevices;
+      document.getElementById('statGroups').textContent = agg.totals.uniqueGroups;
+      document.getElementById('statDateRange').textContent =
+        (filters.dateFrom ? formatDate(filters.dateFrom) : formatDate(reportDateRange.min)) + ' → ' +
+        (filters.dateTo ? formatDate(filters.dateTo) : formatDate(reportDateRange.max));
+      document.getElementById('statReportCreated').textContent = formatDate(reportDateRange.max);
 
-    function draw(allDevices, result) {
-      var devices = selectedPaths.length > 0 ? allDevices.filter(function (d) { return selectedPaths.indexOf(d.path) !== -1; }) : allDevices;
-      devices = devices.slice().sort(function (a, b) { return b.volume - a.volume; });
-
-      var totalVolume = devices.reduce(function (s, d) { return s + d.volume; }, 0);
-      var totalRecords = devices.reduce(function (s, d) { return s + d.records; }, 0);
-
-      document.getElementById('statDevices').textContent = devices.length;
-      document.getElementById('statVolume').textContent = formatVolume(totalVolume);
-      document.getElementById('statApps').textContent = result.totals.uniqueApps;
-      document.getElementById('statRecords').textContent = totalRecords;
+      var networkLabel = filters.network === 'all' ? 'all networks' : filters.network === 'wifi' ? 'Wi-Fi only' : 'Cellular only';
+      document.getElementById('filterPill').textContent =
+        formatDate(filters.dateFrom || reportDateRange.min) + ' → ' + formatDate(filters.dateTo || reportDateRange.max) + ' · ' + networkLabel;
 
       // Table
       var tbody = document.getElementById('deviceTableBody');
-      tbody.innerHTML = devices.map(function (d) {
+      function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+      tbody.innerHTML = topDevices.map(function (d) {
         var display = d.email || d.name;
         var tag = d.email ? '' : '<span class="tag">unmapped</span>';
-        function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
         return '<tr><td>' + esc(display) + ' ' + tag + '</td><td>' + esc(d.path) + '</td><td>' +
           formatVolume(d.volume) + '</td><td>' + formatVolume(d.upload) + '</td><td>' + formatVolume(d.download) +
           '</td><td>' + d.records + '</td></tr>';
       }).join('') || '<tr><td colspan="6" class="empty">No devices match the current filter.</td></tr>';
 
-      // Device chart (top 10 by volume)
-      var top = devices.slice(0, 10);
+      // Device chart
       var deviceCtx = document.getElementById('deviceChart').getContext('2d');
       if (deviceChart) deviceChart.destroy();
       deviceChart = new Chart(deviceCtx, {
         type: 'bar',
         data: {
-          labels: top.map(function (d) { return d.email || d.name; }),
-          datasets: [{ label: 'Volume (KB)', data: top.map(function (d) { return d.volume; }), backgroundColor: '#7c8cff' }],
+          labels: topDevices.map(function (d) { return d.email || d.name; }),
+          datasets: [{ label: 'Volume (KB)', data: topDevices.map(function (d) { return d.volume; }), backgroundColor: '#7c8cff' }],
         },
         options: {
           indexAxis: 'y',
@@ -293,20 +377,34 @@
         },
       });
 
-      // App chart (top 8 by volume, filtered to selected devices' report rows
-      // isn't tracked per-app-per-device here, so this reflects the full
-      // report's app breakdown regardless of group filter)
-      var apps = result.appStats.slice().sort(function (a, b) { return b.volume - a.volume; }).slice(0, 8);
+      // App chart
       var appCtx = document.getElementById('appChart').getContext('2d');
       if (appChart) appChart.destroy();
       appChart = new Chart(appCtx, {
         type: 'doughnut',
         data: {
-          labels: apps.map(function (a) { return a.name; }),
-          datasets: [{ data: apps.map(function (a) { return a.volume; }), backgroundColor: ['#7c8cff', '#36d399', '#f5a623', '#ff7b7b', '#4fd1e5', '#c792ea', '#f781be', '#a3e635'] }],
+          labels: topApps.map(function (a) { return a.name; }),
+          datasets: [{ data: topApps.map(function (a) { return a.volume; }), backgroundColor: ['#7c8cff', '#36d399', '#f5a623', '#ff7b7b', '#4fd1e5', '#c792ea', '#f781be', '#a3e635', '#5eead4', '#fbbf24'] }],
         },
         options: { plugins: { legend: { position: 'right', labels: { color: '#e8eef7', boxWidth: 12 } } } },
       });
+    }
+
+    function loadReport(result) {
+      lastRows = result.rows;
+      reportDateRange = fullDateRange(lastRows);
+      filters = { dateFrom: reportDateRange.min, dateTo: reportDateRange.max, network: 'all', topN: 10, selectedPaths: [] };
+
+      var fromInput = document.getElementById('fromDate');
+      var toInput = document.getElementById('toDate');
+      fromInput.value = reportDateRange.min ? formatDate(reportDateRange.min) : '';
+      toInput.value = reportDateRange.max ? formatDate(reportDateRange.max) : '';
+      document.querySelectorAll('#networkSeg .seg-btn').forEach(function (b) { b.classList.toggle('active', b.dataset.network === 'all'); });
+      document.getElementById('topNSelect').value = '10';
+
+      renderGroupFilterList(lastRows);
+      renderAll();
+      document.getElementById('results').classList.remove('hidden');
     }
 
     // ---- File handling ----
@@ -326,10 +424,11 @@
           lookupReady.finally(function () {
             var parsed = parseReport(results.data);
             if (parsed.error) { showError(parsed.error); return; }
-            if (parsed.totals.totalRecords === 0) {
+            if (parsed.rows.length === 0) {
               showError('No usage rows found in this file (0 records with a device name). Check it\'s the right export.');
+              return;
             }
-            render(parsed);
+            loadReport(parsed);
           });
         },
         error: function (err) {
@@ -353,15 +452,34 @@
       handleFile(file);
     });
 
-    document.getElementById('applyFilterBtn').addEventListener('click', function () {
-      selectedPaths = currentSelectedPaths();
-      if (lastResult) draw(enrichedDevices(lastResult), lastResult);
+    // ---- Filter bar wiring ----
+    document.querySelectorAll('#networkSeg .seg-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('#networkSeg .seg-btn').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+      });
     });
-    document.getElementById('clearFilterBtn').addEventListener('click', function (e) {
+
+    document.getElementById('applyMainFilterBtn').addEventListener('click', function () {
+      var fromVal = document.getElementById('fromDate').value;
+      var toVal = document.getElementById('toDate').value;
+      filters.dateFrom = fromVal ? new Date(fromVal + 'T00:00:00') : null;
+      filters.dateTo = toVal ? new Date(toVal + 'T23:59:59') : null;
+      var activeSeg = document.querySelector('#networkSeg .seg-btn.active');
+      filters.network = activeSeg ? activeSeg.dataset.network : 'all';
+      filters.topN = parseInt(document.getElementById('topNSelect').value, 10) || 10;
+      if (lastRows.length > 0) renderAll();
+    });
+
+    document.getElementById('applyGroupFilterBtn').addEventListener('click', function () {
+      filters.selectedPaths = Array.from(document.querySelectorAll('.groupCheckbox:checked')).map(function (el) { return el.value; });
+      if (lastRows.length > 0) renderAll();
+    });
+    document.getElementById('clearGroupFilterBtn').addEventListener('click', function (e) {
       e.preventDefault();
-      selectedPaths = [];
+      filters.selectedPaths = [];
       document.querySelectorAll('.groupCheckbox:checked').forEach(function (el) { el.checked = false; });
-      if (lastResult) draw(enrichedDevices(lastResult), lastResult);
+      if (lastRows.length > 0) renderAll();
     });
   })();
   </script>
