@@ -193,16 +193,21 @@ app.get('/groups', async (req, res) => {
   }
 });
 
-// Temporary diagnostic route: dumps any Swagger/OpenAPI path mentioning
-// "device" so we can find the right endpoint for per-group device counts.
-// Safe to remove once we've identified the correct API call.
-app.get('/debug/swagger', async (req, res) => {
+// Temporary diagnostic route: probes a handful of plausible endpoints for
+// per-group device counts against a real group ID, with a hard timeout so a
+// stalled candidate can't hang the whole request. Safe to remove once we've
+// identified the correct API call.
+app.get('/debug/probe', async (req, res) => {
   if (!req.session.accessToken) return res.redirect('/');
+  const groupId = req.query.groupId || 'afbd2949-6402-4801-b216-25b10b2e5b3f'; // "My Company"
   const candidates = [
-    '/swagger/v2/swagger.json',
-    '/swagger/docs/v1',
-    '/docs/swagger.json',
-    '/swagger.json',
+    `/devicegroups/${groupId}`,
+    `/devicegroups/${groupId}/devices`,
+    `/devicegroups/${encodeURIComponent('\\\\My Company')}/devices`,
+    `/devices?deviceGroupId=${groupId}`,
+    `/devices?groupId=${groupId}`,
+    `/devicegroups/${groupId}/summary`,
+    `/devicegroups/${groupId}/deviceCount`,
   ];
   const results = [];
   for (const path of candidates) {
@@ -214,16 +219,14 @@ app.get('/debug/swagger', async (req, res) => {
           'Accept-Language': 'en-US,en;q=0.9',
           'User-Agent': 'MobiControl-Device-Groups-Viewer/1.0',
         },
+        signal: AbortSignal.timeout(8000),
       });
-      if (!resp.ok) {
-        results.push({ path, status: resp.status });
-        continue;
-      }
-      const json = await resp.json();
-      const paths = Object.keys(json.paths || {}).filter((p) => /device/i.test(p));
-      results.push({ path, status: resp.status, deviceRelatedPaths: paths });
+      const bodyText = await resp.text().catch(() => '');
+      results.push({ path, status: resp.status, body: bodyText.slice(0, 400) });
+      console.log(`[probe] ${path} -> ${resp.status} :: ${bodyText.slice(0, 300)}`);
     } catch (err) {
       results.push({ path, error: err.message });
+      console.log(`[probe] ${path} -> ERROR ${err.message}`);
     }
   }
   res.type('json').send(JSON.stringify(results, null, 2));
