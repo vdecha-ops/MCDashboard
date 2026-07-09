@@ -21,9 +21,11 @@
 const path = require('path');
 const express = require('express');
 const session = require('express-session');
+const multer = require('multer');
 const config = require('./config');
 
 const app = express();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 // Render (like Heroku/Railway) terminates TLS at a reverse proxy and forwards
 // plain HTTP to the app. Without this, Express never sees the connection as
@@ -191,11 +193,133 @@ function normalizeGroup(g) {
   };
 }
 
+// Every device id-ish field we've seen across MobiControl versions, in the
+// order we prefer to display/match on. The CSV import matches a row's device
+// id against ALL of these fields (whichever one the customer's CSV happens
+// to use), so we don't have to guess a single "correct" field up front.
+const DEVICE_ID_FIELDS = [
+  'DeviceId', 'deviceId', 'DeviceID', 'Id', 'id', 'ID',
+  'Udid', 'udid', 'UDID', 'ReferenceId', 'referenceId',
+  'SerialNumber', 'serialNumber', 'Imei', 'imei', 'IMEI',
+];
+
+const DEVICE_NAME_FIELDS = [
+  'Alias', 'alias', 'DeviceName', 'deviceName', 'Name', 'name', 'FriendlyName', 'friendlyName',
+];
+
+// MobiControl field casing/shape can vary by version; normalize to a flat object.
+function normalizeDevice(d) {
+  if (typeof d !== 'object' || d === null) {
+    return { name: String(d), path: '', ids: {} };
+  }
+  const ids = {};
+  for (const field of DEVICE_ID_FIELDS) {
+    if (d[field] !== undefined && d[field] !== null && d[field] !== '') {
+      ids[field] = String(d[field]);
+    }
+  }
+  return {
+    name: pick(d, DEVICE_NAME_FIELDS) || '(unnamed device)',
+    path: pick(d, ['Path', 'path', 'FullPath', 'fullPath']),
+    ids,
+  };
+}
+
+function normalizeKey(value) {
+  return String(value == null ? '' : value).trim().toLowerCase();
+}
+
+// Looks up an email for a device by checking every id-ish field the device
+// has against the imported CSV map (keyed by normalized device id string).
+function findMappedEmail(device, emailMap) {
+  if (!emailMap || emailMap.size === 0) return null;
+  for (const field of DEVICE_ID_FIELDS) {
+    const raw = device.ids[field];
+    if (!raw) continue;
+    const hit = emailMap.get(normalizeKey(raw));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// --- CSV import (device id -> user email) --------------------------------
+// Kept in memory only (mirrors the existing in-memory session store): simple,
+// no extra storage/dependency, and easy to re-import after a restart. A
+// dedicated persistence layer (DB/file) could replace this if needed later.
+let deviceEmailMap = new Map();
+let lastImport = null; // { filename, rowCount, mappedCount, importedAt }
+
+// Very small CSV line splitter: handles plain commas and "quoted, fields".
+// Good enough for a two-column DeviceId/Email export; not a full RFC 4180
+// parser (no embedded newlines inside quotes).
+function parseCsvLine(line) {
+  const cells = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      cells.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  cells.push(cur);
+  return cells.map((c) => c.trim());
+}
+
+function parseDeviceEmailCsv(text) {
+  const lines = text.split(/\r\n|\r|\n/).filter((l) => l.trim() !== '');
+  if (lines.length === 0) return { map: new Map(), rowCount: 0 };
+
+  let idCol = 0;
+  let emailCol = 1;
+  let startRow = 0;
+
+  const firstCells = parseCsvLine(lines[0]).map((c) => c.toLowerCase().replace(/[\s_]/g, ''));
+  const idHeaderIdx = firstCells.findIndex((c) => /(deviceid|device|udid|serial|imei)/.test(c) && !/mail/.test(c));
+  const emailHeaderIdx = firstCells.findIndex((c) => /mail/.test(c));
+  if (idHeaderIdx !== -1 && emailHeaderIdx !== -1) {
+    idCol = idHeaderIdx;
+    emailCol = emailHeaderIdx;
+    startRow = 1; // first line was a real header row, skip it
+  }
+
+  const map = new Map();
+  let rowCount = 0;
+  for (let i = startRow; i < lines.length; i++) {
+    const cells = parseCsvLine(lines[i]);
+    const id = cells[idCol];
+    const email = cells[emailCol];
+    if (!id || !email) continue;
+    map.set(normalizeKey(id), email.trim());
+    rowCount++;
+  }
+  return { map, rowCount };
+}
+
 function httpErrorMessage(status) {
   if (status === 400 || status === 401) return 'Invalid username, password, or API client credentials.';
   if (status === 403) return 'This account is not authorized to call the MobiControl API.';
   if (status) return `MobiControl server returned an error (HTTP ${status}).`;
   return 'MobiControl server returned an unexpected error.';
+}
+
+function requireLogin(req, res, next) {
+  if (!req.session.accessToken) return res.redirect('/');
+  next();
 }
 
 app.get('/', (req, res) => {
@@ -225,9 +349,7 @@ app.post('/login', async (req, res) => {
   }
 });
 
-app.get('/groups', async (req, res) => {
-  if (!req.session.accessToken) return res.redirect('/');
-
+app.get('/groups', requireLogin, async (req, res) => {
   try {
     const data = await fetchDeviceGroups(req.session.accessToken);
     const items = Array.isArray(data) ? data : data.Items || data.items || data.Data || data.data || [];
@@ -256,6 +378,114 @@ app.get('/groups', async (req, res) => {
   }
 });
 
+// All devices on the MobiControl server, with an optional multi-select
+// filter by device group (matched on the group's exact Path, same approach
+// used for the per-group counts on /groups) and the device's display name
+// swapped for the imported CSV email when a mapping exists.
+app.get('/devices', requireLogin, async (req, res) => {
+  const selectedGroups = req.query.groups
+    ? (Array.isArray(req.query.groups) ? req.query.groups : [req.query.groups])
+    : [];
+
+  try {
+    const groupData = await fetchDeviceGroups(req.session.accessToken);
+    const groupItems = Array.isArray(groupData)
+      ? groupData
+      : groupData.Items || groupData.items || groupData.Data || groupData.data || [];
+    const deviceGroups = groupItems.map(normalizeGroup).filter((g) => g.path);
+
+    const rawDevices = await fetchAllDevices(req.session.accessToken);
+    let devices = rawDevices.map((d) => {
+      const norm = normalizeDevice(d);
+      const email = findMappedEmail(norm, deviceEmailMap);
+      return {
+        display: email || norm.name,
+        mapped: Boolean(email),
+        name: norm.name,
+        path: norm.path,
+        id: norm.ids.DeviceId || norm.ids.Id || norm.ids.Udid || norm.ids.ReferenceId || Object.values(norm.ids)[0] || '',
+      };
+    });
+
+    if (selectedGroups.length > 0) {
+      const selectedSet = new Set(selectedGroups);
+      devices = devices.filter((d) => selectedSet.has(d.path));
+    }
+
+    res.render('devices', {
+      error: null,
+      devices,
+      deviceGroups,
+      selectedGroups,
+      username: req.session.username,
+      lastImport,
+    });
+  } catch (err) {
+    if (err.status === 401) {
+      return req.session.destroy(() => res.redirect('/'));
+    }
+    const msg = err.status ? httpErrorMessage(err.status) : `Could not reach MobiControl server: ${err.message}`;
+    res.render('devices', {
+      error: msg,
+      devices: [],
+      deviceGroups: [],
+      selectedGroups,
+      username: req.session.username,
+      lastImport,
+    });
+  }
+});
+
+app.get('/devices/import', requireLogin, (req, res) => {
+  res.render('import', { error: null, success: null, lastImport, username: req.session.username });
+});
+
+app.post('/devices/import', requireLogin, upload.single('csvFile'), (req, res) => {
+  if (!req.file) {
+    return res.render('import', {
+      error: 'Please choose a CSV file to upload.',
+      success: null,
+      lastImport,
+      username: req.session.username,
+    });
+  }
+
+  try {
+    const text = req.file.buffer.toString('utf-8');
+    const { map, rowCount } = parseDeviceEmailCsv(text);
+    if (map.size === 0) {
+      return res.render('import', {
+        error: 'No valid rows found. Expect a CSV with a device ID column and an email column.',
+        success: null,
+        lastImport,
+        username: req.session.username,
+      });
+    }
+
+    deviceEmailMap = map;
+    lastImport = {
+      filename: req.file.originalname,
+      rowCount,
+      mappedCount: map.size,
+      importedAt: new Date().toISOString(),
+    };
+
+    res.render('import', {
+      error: null,
+      success: `Imported ${map.size} device-to-email mapping(s) from "${req.file.originalname}".`,
+      lastImport,
+      username: req.session.username,
+    });
+  } catch (err) {
+    res.render('import', {
+      error: `Could not parse CSV: ${err.message}`,
+      success: null,
+      lastImport,
+      username: req.session.username,
+    });
+  }
+});
+
 app.get('/logout', (req, res) => {
   req.session.destroy(() => res.redirect('/'));
 });
@@ -264,4 +494,4 @@ app.listen(config.PORT, () => {
   console.log(`Server running on port ${config.PORT}`);
 });
 
-module.exports = { apiBase, normalizeGroup, httpErrorMessage, pick };
+module.exports = { apiBase, normalizeGroup, normalizeDevice, findMappedEmail, parseDeviceEmailCsv, httpErrorMessage, pick };

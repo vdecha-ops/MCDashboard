@@ -1,8 +1,8 @@
 # MobiControl Device Groups Viewer (Node.js)
 
 A small Node/Express app that signs in to SOTI MobiControl's REST API and
-lists the server's device groups. No Python required — built to deploy on
-Render's free web service tier.
+lists the server's device groups and devices. No Python required — built to
+deploy on Render's free web service tier.
 
 ## How it works
 
@@ -17,6 +17,23 @@ On login the app calls:
 2. `GET {server}/MobiControl/api/devicegroups` with `Authorization: Bearer {access_token}` to list device groups.
 
 The access token is kept only in the signed session cookie (server-side), never written to disk. The password is never stored or logged.
+
+## Pages
+
+- **`/groups`** — device groups with a per-group device count.
+- **`/devices`** — every device on the server. Supports filtering by one or more device groups (checkboxes, multi-select) via `?groups=<path>&groups=<path>...`. Each row shows the mapped user email (from the imported CSV) if one exists for that device, otherwise falls back to the device's MobiControl name/alias, tagged "unmapped".
+- **`/devices/import`** — upload a CSV mapping device ID to user email (see below).
+
+## Device &rarr; email CSV import
+
+Upload a two-column CSV at `/devices/import`:
+
+- A device identifier column (`DeviceId`, `Udid`, `SerialNumber`, `IMEI`, etc. — any of these).
+- An email column.
+
+A header row is auto-detected if present (matched by column names containing "device"/"udid"/"serial"/"imei" and "mail"); otherwise the first column is treated as the device ID and the second as the email. On `/devices`, each device is matched against the imported map by checking every id-like field MobiControl returns for that device (Device ID, UDID, Serial Number, IMEI, ReferenceId), so the CSV doesn't need to target one specific field.
+
+The mapping is kept in memory only (same approach as the session store) — it resets on a server restart/redeploy, so re-upload the CSV after those. This keeps the app dependency-free; swap in a real datastore later if the mapping needs to persist longer.
 
 ## Run locally
 
@@ -56,4 +73,6 @@ Note: Render's free web services spin down after periods of inactivity and take 
 ## Notes
 
 - Device group field names can vary slightly between MobiControl versions; the app normalizes common variants (`Name`/`name`, `Id`/`ID`, `Path`/`FullPath`, etc.) in `normalizeGroup()` in `server.js`. Adjust there if your server uses different field names.
+- Device field names are normalized the same way in `normalizeDevice()`/`DEVICE_ID_FIELDS`/`DEVICE_NAME_FIELDS` — extend those lists if a server exposes different field names for device id/name.
 - If your on-premises server uses a self-signed certificate, the built-in `fetch` will reject it. The simplest (insecure) workaround is setting `NODE_TLS_REJECT_UNAUTHORIZED=0` as an environment variable — only do this if you understand the risk, and prefer fixing the certificate instead.
+- Device counting/listing pages through `/devices` using `skip`/`take` (confirmed pagination params) and match a device to its group by exact `Path` string, since MobiControl's group-filter query params on `/devices` don't actually filter server-side.
