@@ -230,10 +230,45 @@ app.get('/groups', async (req, res) => {
   }
 });
 
-// Temporary diagnostic route: the "deviceGroupId" query param turned out to
-// be silently ignored (every group returned the same default page size).
-// This tries several candidate filter param names against two very
-// different-sized groups so we can spot which one actually filters.
+// Temporary diagnostic route: dump the full shape of ONE device object so we
+// can find whatever field actually identifies which group it belongs to
+// (query-string filtering on /devices turned out to be a dead end).
+app.get('/debug/device', async (req, res) => {
+  if (!req.session.accessToken) return res.redirect('/');
+  try {
+    const resp = await fetch(`${apiBase()}/devices`, {
+      headers: {
+        Authorization: `Bearer ${req.session.accessToken}`,
+        Accept: 'application/json',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'User-Agent': 'MobiControl-Device-Groups-Viewer/1.0',
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+    const json = await resp.json();
+    const items = Array.isArray(json) ? json : json.Items || json.items || [];
+    const sample = items[0] || {};
+    const groupLikeKeys = Object.keys(sample).filter((k) => /group|path/i.test(k));
+    res.type('json').send(
+      JSON.stringify(
+        {
+          status: resp.status,
+          totalCount: resp.headers.get('x-total-count'),
+          itemCount: items.length,
+          allKeys: Object.keys(sample),
+          groupLikeKeys,
+          groupLikeValues: Object.fromEntries(groupLikeKeys.map((k) => [k, sample[k]])),
+          fullSample: sample,
+        },
+        null,
+        2
+      )
+    );
+  } catch (err) {
+    res.type('text').send(`ERROR: ${err.message}`);
+  }
+});
+
 app.get('/debug/filter', async (req, res) => {
   if (!req.session.accessToken) return res.redirect('/');
   const groups = {
