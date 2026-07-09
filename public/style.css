@@ -462,6 +462,16 @@ select {
 
 .top-list-card table { margin-top: 24px; }
 
+.row-link {
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.row-link:hover { color: var(--accent); text-decoration: underline; }
+
+#drillDownCard { margin-top: 20px; }
+
 .tag {
   display: inline-block;
   margin-left: 8px;
