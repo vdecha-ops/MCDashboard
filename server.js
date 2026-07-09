@@ -25,7 +25,7 @@ const multer = require('multer');
 const config = require('./config');
 
 const app = express();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
 // Render (like Heroku/Railway) terminates TLS at a reverse proxy and forwards
 // plain HTTP to the app. Without this, Express never sees the connection as
@@ -440,7 +440,28 @@ app.get('/devices/import', requireLogin, (req, res) => {
   res.render('import', { error: null, success: null, lastImport, username: req.session.username });
 });
 
-app.post('/devices/import', requireLogin, upload.single('csvFile'), (req, res) => {
+function uploadErrorMessage(err) {
+  if (err.code === 'LIMIT_FILE_SIZE') return 'That file is too large (max 25 MB). Export a smaller CSV or split it into parts.';
+  if (err.code === 'LIMIT_UNEXPECTED_FILE') return 'Unexpected upload field. Please use the file picker on this page.';
+  return `Could not process the uploaded file: ${err.message}`;
+}
+
+app.post('/devices/import', requireLogin, (req, res) => {
+  upload.single('csvFile')(req, res, (err) => {
+    if (err) {
+      console.error(`[import] upload failed: ${err.message}`);
+      return res.render('import', {
+        error: uploadErrorMessage(err),
+        success: null,
+        lastImport,
+        username: req.session.username,
+      });
+    }
+    handleCsvImport(req, res);
+  });
+});
+
+function handleCsvImport(req, res) {
   if (!req.file) {
     return res.render('import', {
       error: 'Please choose a CSV file to upload.',
@@ -484,7 +505,7 @@ app.post('/devices/import', requireLogin, upload.single('csvFile'), (req, res) =
       username: req.session.username,
     });
   }
-});
+}
 
 app.get('/logout', (req, res) => {
   req.session.destroy(() => res.redirect('/'));
