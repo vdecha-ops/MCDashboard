@@ -339,19 +339,37 @@ select {
   color: var(--muted);
 }
 
-/* Dashboard layout: filter sidebar + main column */
-.dashboard-layout {
+/* Groups field, inlined into the main filter bar */
+.groups-field {
+  min-width: 220px;
+  flex: 1 1 220px;
+}
+
+.clear-inline {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--accent);
+  text-decoration: none;
+  margin-left: 8px;
+}
+
+.clear-inline:hover { text-decoration: underline; }
+
+.filter-list-inline {
+  max-height: 84px;
+  overflow-y: auto;
   display: flex;
-  gap: 20px;
-  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--drop-bg);
 }
 
-.filter-card {
-  width: 240px;
-  flex-shrink: 0;
-  padding: 20px;
-}
-
+/* Dashboard main column */
 .main-col {
   flex: 1;
   min-width: 0;
@@ -425,9 +443,8 @@ select {
 }
 
 @media (max-width: 900px) {
-  .dashboard-layout { flex-direction: column; }
-  .filter-card { width: 100%; }
   .charts-row { grid-template-columns: 1fr; }
   .summary-bar { gap: 20px; }
   .filter-bar-row { gap: 16px; }
+  .groups-field { flex-basis: 100%; }
 }
