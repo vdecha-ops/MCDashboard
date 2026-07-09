@@ -72,6 +72,12 @@
               <option value="999999">All</option>
             </select>
           </div>
+          <div class="filter-field groups-field">
+            <label>Groups <a href="#" id="clearGroupsLink" class="clear-inline">clear</a></label>
+            <div id="groupFilterList" class="filter-list-inline">
+              <p class="empty">No group data yet.</p>
+            </div>
+          </div>
         </div>
         <div class="filter-bar-actions">
           <button type="button" id="applyMainFilterBtn" class="apply-btn">Apply</button>
@@ -79,43 +85,32 @@
         </div>
       </div>
 
-      <div class="dashboard-layout">
-        <aside class="card filter-card">
-          <h2 class="filter-title">Filter by group</h2>
-          <div id="groupFilterList" class="filter-list">
-            <p class="empty">No group data yet.</p>
+      <div class="main-col">
+        <div class="charts-row">
+          <div class="card chart-card">
+            <h2 class="chart-title">Top devices by volume</h2>
+            <canvas id="deviceChart" height="220"></canvas>
           </div>
-          <button type="button" id="applyGroupFilterBtn">Apply filter</button>
-          <a class="clear-link" id="clearGroupFilterBtn" href="#">Clear filter</a>
-        </aside>
+          <div class="card chart-card">
+            <h2 class="chart-title">Volume by application</h2>
+            <canvas id="appChart" height="220"></canvas>
+          </div>
+        </div>
 
-        <div class="main-col">
-          <div class="charts-row">
-            <div class="card chart-card">
-              <h2 class="chart-title">Top devices by volume</h2>
-              <canvas id="deviceChart" height="220"></canvas>
-            </div>
-            <div class="card chart-card">
-              <h2 class="chart-title">Volume by application</h2>
-              <canvas id="appChart" height="220"></canvas>
-            </div>
-          </div>
-
-          <div class="card table-card">
-            <table>
-              <thead>
-                <tr>
-                  <th>User / Device</th>
-                  <th>Group Path</th>
-                  <th>Volume</th>
-                  <th>Upload</th>
-                  <th>Download</th>
-                  <th>Records</th>
-                </tr>
-              </thead>
-              <tbody id="deviceTableBody"></tbody>
-            </table>
-          </div>
+        <div class="card table-card">
+          <table>
+            <thead>
+              <tr>
+                <th>User / Device</th>
+                <th>Group Path</th>
+                <th>Volume</th>
+                <th>Upload</th>
+                <th>Download</th>
+                <th>Records</th>
+              </tr>
+            </thead>
+            <tbody id="deviceTableBody"></tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -468,18 +463,13 @@
       var activeSeg = document.querySelector('#networkSeg .seg-btn.active');
       filters.network = activeSeg ? activeSeg.dataset.network : 'all';
       filters.topN = parseInt(document.getElementById('topNSelect').value, 10) || 10;
-      if (lastRows.length > 0) renderAll();
-    });
-
-    document.getElementById('applyGroupFilterBtn').addEventListener('click', function () {
       filters.selectedPaths = Array.from(document.querySelectorAll('.groupCheckbox:checked')).map(function (el) { return el.value; });
       if (lastRows.length > 0) renderAll();
     });
-    document.getElementById('clearGroupFilterBtn').addEventListener('click', function (e) {
+
+    document.getElementById('clearGroupsLink').addEventListener('click', function (e) {
       e.preventDefault();
-      filters.selectedPaths = [];
       document.querySelectorAll('.groupCheckbox:checked').forEach(function (el) { el.checked = false; });
-      if (lastRows.length > 0) renderAll();
     });
   })();
   </script>
