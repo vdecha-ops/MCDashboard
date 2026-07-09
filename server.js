@@ -440,6 +440,23 @@ app.get('/devices/import', requireLogin, (req, res) => {
   res.render('import', { error: null, success: null, lastImport, username: req.session.username });
 });
 
+// TEMPORARY diagnostic route: dump raw field names + a couple of sample
+// devices so we can find which field holds the assigned/enrolled user's
+// email on this MobiControl server. Remove once that's confirmed.
+app.get('/debug/device-sample', requireLogin, async (req, res) => {
+  try {
+    const devices = await fetchAllDevices(req.session.accessToken);
+    const sample = devices.slice(0, 3);
+    const allKeys = new Set();
+    for (const d of devices) {
+      if (d && typeof d === 'object') Object.keys(d).forEach((k) => allKeys.add(k));
+    }
+    res.json({ totalDevices: devices.length, allFieldNames: Array.from(allKeys).sort(), sample });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 function uploadErrorMessage(err) {
   if (err.code === 'LIMIT_FILE_SIZE') return 'That file is too large (max 25 MB). Export a smaller CSV or split it into parts.';
   if (err.code === 'LIMIT_UNEXPECTED_FILE') return 'Unexpected upload field. Please use the file picker on this page.';
