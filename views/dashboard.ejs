@@ -334,28 +334,49 @@
     function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
     function escAttr(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
 
+    // Chart values are plotted in GB (matches the reference dashboard's
+    // scale) regardless of the actual magnitude -- tables still use
+    // formatVolume()'s auto KB/MB/GB scaling, this is chart-axis-only.
+    function toGB(kb) { return kb / (1024 * 1024); }
+
     // Chart.js config shared by the top-list chart and the drill-down chart --
-    // colors, grid, axis and legend styling matched to the reference
-    // dashboard (sotidash.freehosting.dev): vertical stacked Upload/Download
-    // bars, #4cc3ff / #ffb648, #1c2840 grid, #8597b0 ticks/legend text.
-    function CHART_CONFIG(labels, uploadData, downloadData) {
+    // colors, grid and legend styling matched to the reference dashboard
+    // (sotidash.freehosting.dev): #4cc3ff / #ffb648 bars, #1c2840 grid,
+    // #8597b0 ticks/legend text. `horizontal` flips index/value axes --
+    // the top-list chart stays vertical, the drill-down chart is horizontal.
+    function CHART_CONFIG(labels, uploadData, downloadData, opts) {
+      var horizontal = !!(opts && opts.horizontal);
+      var valueAxis = horizontal ? 'x' : 'y';
+      var categoryAxis = horizontal ? 'y' : 'x';
+      var scales = {};
+      scales[valueAxis] = {
+        stacked: true,
+        beginAtZero: true,
+        ticks: { color: '#8597b0' },
+        grid: { color: '#1c2840' },
+        title: { display: true, text: 'GB', color: '#8597b0' },
+      };
+      scales[categoryAxis] = {
+        stacked: true,
+        ticks: { color: '#8597b0', maxRotation: horizontal ? 0 : 60, minRotation: horizontal ? 0 : 30 },
+        grid: { color: '#1c2840' },
+      };
+
       return {
         type: 'bar',
         data: {
           labels: labels,
           datasets: [
-            { label: 'Upload', data: uploadData, backgroundColor: '#4cc3ff' },
-            { label: 'Download', data: downloadData, backgroundColor: '#ffb648' },
+            { label: 'Upload', data: uploadData.map(toGB), backgroundColor: '#4cc3ff' },
+            { label: 'Download', data: downloadData.map(toGB), backgroundColor: '#ffb648' },
           ],
         },
         options: {
+          indexAxis: horizontal ? 'y' : 'x',
           responsive: true,
           maintainAspectRatio: true,
           plugins: { legend: { labels: { color: '#8597b0' } } },
-          scales: {
-            x: { stacked: true, ticks: { color: '#8597b0', maxRotation: 60, minRotation: 30 }, grid: { color: '#1c2840' } },
-            y: { stacked: true, beginAtZero: true, ticks: { color: '#8597b0' }, grid: { color: '#1c2840' } },
-          },
+          scales: scales,
         },
       };
     }
@@ -418,7 +439,8 @@
       drillChart = new Chart(ctx, CHART_CONFIG(
         grouped.map(function (g) { return g.key; }),
         grouped.map(function (g) { return g.upload; }),
-        grouped.map(function (g) { return g.download; })
+        grouped.map(function (g) { return g.download; }),
+        { horizontal: true }
       ));
 
       var card = document.getElementById('drillDownCard');
