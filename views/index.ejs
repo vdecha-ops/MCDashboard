@@ -2,17 +2,22 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Telecom Data Usage Dashboard</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <div class="page">
-    <h1>Telecom Data Usage</h1>
-    <p class="subtitle">Server: <%= serverUrl %></p>
+  <div class="wrap" style="max-width:460px;">
+    <header class="top">
+      <div>
+        <h1>Telecom Data Usage</h1>
+        <div class="sub">Server: <%= serverUrl %></div>
+      </div>
+    </header>
 
     <div class="card">
       <% if (error) { %>
-        <div class="error"><%= error %></div>
+        <div class="err"><%= error %></div>
       <% } %>
 
       <form method="post" action="/login">
@@ -22,7 +27,7 @@
         <label for="password">Password</label>
         <input type="password" id="password" name="password" autocomplete="current-password" required>
 
-        <button type="submit">Sign in</button>
+        <button type="submit" class="primary" style="width:100%;margin-top:20px;">Sign in</button>
       </form>
 
       <p class="hint">

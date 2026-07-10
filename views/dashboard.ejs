@@ -1,630 +1,598 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Telecom Data Usage Dashboard</title>
-  <link rel="stylesheet" href="/style.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Telecom Data Usage Dashboard</title>
+<link rel="stylesheet" href="/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
-  <div class="page page-wide">
-    <div class="header-row">
-      <div>
-        <h1>Telecom Data Usage</h1>
-        <p class="sub">Upload a MobiControl usage export and explore consumption by device and app.</p>
-      </div>
-      <nav class="nav-links">
-        <span class="signed-in">Signed in as <%= username %></span>
-        <a href="/logout">Sign out</a>
-      </nav>
+<div class="wrap">
+
+  <header class="top">
+    <div>
+      <h1>Telecom Data Usage</h1>
+      <div class="sub">Import a MobiControl usage export and explore consumption by app and device.</div>
     </div>
-
-    <div id="uploadCard" class="card">
-      <div id="dropZone" class="drop">
-        <div class="drop-title">Drop your CSV here</div>
-        <div class="drop-sub">or click to browse — the file is parsed in your browser, nothing is uploaded.</div>
-        <input type="file" id="fileInput" accept=".csv,text/csv" hidden>
-      </div>
-      <p class="hint">
-        Expects a MobiControl "Telecom Data Usage" report export (Device Name, Date &amp; Time, Volume (KB), Type,
-        Application ID). Any junk title/summary rows above or below the real header are skipped automatically.
-      </p>
-      <div id="err" class="error hidden"></div>
-      <div id="lookupStatus" class="hint"></div>
+    <div style="display:flex;gap:16px;align-items:center;">
+      <span class="signed-in">Signed in as <%= username %></span>
+      <button type="button" class="ghost hidden" id="resetBtn">Import another file</button>
+      <a href="/logout" class="back">Sign out</a>
     </div>
+  </header>
 
-    <div id="results" class="hidden">
-      <div class="card summary-bar">
-        <div class="stat-group"><div class="stat-value" id="statVolume">-</div><div class="stat-label">Total Volume</div></div>
-        <div class="stat-group"><div class="stat-value" id="statApps">-</div><div class="stat-label">Apps</div></div>
-        <div class="stat-group"><div class="stat-value" id="statDevices">-</div><div class="stat-label">Devices</div></div>
-        <div class="stat-group"><div class="stat-value" id="statGroups">-</div><div class="stat-label">Groups</div></div>
-        <div class="stat-group"><div class="stat-value" id="statDateRange">-</div><div class="stat-label">Date Range</div></div>
-        <div class="stat-group"><div class="stat-value" id="statReportCreated">-</div><div class="stat-label">Report Created</div></div>
-      </div>
-
-      <div class="card filter-bar">
-        <div class="filter-bar-row">
-          <div class="filter-field">
-            <label>From</label>
-            <input type="date" id="fromDate">
-          </div>
-          <div class="filter-field">
-            <label>To</label>
-            <input type="date" id="toDate">
-          </div>
-          <div class="filter-field">
-            <label>Network</label>
-            <div class="segmented" id="networkSeg">
-              <button type="button" class="seg-btn active" data-network="all">All</button>
-              <button type="button" class="seg-btn" data-network="wifi">Wi-Fi</button>
-              <button type="button" class="seg-btn" data-network="cellular">Cellular</button>
-            </div>
-          </div>
-          <div class="filter-field">
-            <label>Show Top</label>
-            <select id="topNSelect">
-              <option value="5">5</option>
-              <option value="10" selected>10</option>
-              <option value="20">20</option>
-              <option value="50">50</option>
-              <option value="999999">All</option>
-            </select>
-          </div>
-          <div class="filter-field groups-field">
-            <label>Groups <a href="#" id="clearGroupsLink" class="clear-inline">clear</a></label>
-            <div id="groupFilterList" class="filter-list-inline">
-              <p class="empty">No group data yet.</p>
-            </div>
-          </div>
-        </div>
-        <div class="filter-bar-actions">
-          <button type="button" id="applyMainFilterBtn" class="apply-btn">Apply</button>
-          <span class="filter-pill" id="filterPill"></span>
-        </div>
-      </div>
-
-      <div class="main-col">
-        <div class="card top-list-card">
-          <div class="tab-nav">
-            <button type="button" class="tab-btn active" data-tab="apps">Top Applications</button>
-            <button type="button" class="tab-btn" data-tab="users">Top Users</button>
-          </div>
-
-          <div class="top-list-header">
-            <h2 class="chart-title" id="topListTitle">Top applications by data used</h2>
-            <span class="filter-pill" id="topListCount"></span>
-          </div>
-
-          <canvas id="topChart" height="260"></canvas>
-
-          <table>
-            <thead id="topListThead"></thead>
-            <tbody id="topListBody"></tbody>
-          </table>
-          <p class="hint">Click a name to see its breakdown.</p>
-        </div>
-
-        <div class="card top-list-card hidden" id="drillDownCard">
-          <div class="top-list-header">
-            <h2 class="chart-title" id="drillTitle"></h2>
-            <a href="#" id="drillBackLink" class="clear-inline">← back to top list</a>
-          </div>
-
-          <canvas id="drillChart" height="220"></canvas>
-
-          <table>
-            <thead id="drillThead"></thead>
-            <tbody id="drillBody"></tbody>
-          </table>
-        </div>
-      </div>
+  <!-- IMPORT -->
+  <div id="importCard" class="card">
+    <div class="drop" id="drop">
+      <h2>Drop your CSV here</h2>
+      <p>or click to browse — the file stays in your browser, nothing is uploaded.</p>
+      <input type="file" id="file" accept=".csv,text/csv" class="hidden">
     </div>
+    <div id="importErr" class="err hidden"></div>
+    <div id="lookupStatus" class="hint"></div>
+    <div class="hint">Expects columns: Device Name, Date &amp; Time, Volume (KB), Type, Application ID (the standard Telecom Data Usage export). Any junk title/summary rows above the real header are skipped automatically.</div>
   </div>
 
-  <script>
-  (function () {
-    'use strict';
+  <!-- DASHBOARD -->
+  <div id="dash" class="hidden">
 
-    // ---- Device lookup (email + group path per device name), fetched once ----
-    var deviceLookup = {}; // lowercased device name -> { name, email, path }
-    var lookupReady = fetch('/api/device-lookup')
-      .then(function (r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-      })
-      .then(function (data) {
-        (data.devices || []).forEach(function (d) {
-          if (d && d.name) deviceLookup[d.name.trim().toLowerCase()] = d;
-        });
-        document.getElementById('lookupStatus').textContent =
-          Object.keys(deviceLookup).length + ' device(s) loaded from MobiControl for email/group matching.';
-      })
-      .catch(function (err) {
-        document.getElementById('lookupStatus').textContent =
-          'Could not load device list from MobiControl (' + err.message + '). Devices will show without email/group.';
+    <div class="card">
+      <div class="stats" id="summary"></div>
+    </div>
+
+    <div class="card">
+      <div class="controls">
+        <div>
+          <label>From</label>
+          <input type="date" id="from">
+        </div>
+        <div>
+          <label>To</label>
+          <input type="date" id="to">
+        </div>
+        <div>
+          <label>Network</label>
+          <div class="seg" id="netSeg">
+            <button type="button" data-net="all" class="on">All</button>
+            <button type="button" data-net="wifi">Wi-Fi</button>
+            <button type="button" data-net="cellular">Cellular</button>
+          </div>
+        </div>
+        <div>
+          <label>Show top</label>
+          <select id="topN"><option>5</option><option selected>10</option><option>20</option><option value="999999">All</option></select>
+        </div>
+        <div>
+          <label>Device groups</label>
+          <div class="msel" id="grpSel">
+            <button type="button" id="grpToggle" class="mselbtn">All groups</button>
+            <div class="mselpop hidden" id="grpPop"></div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:16px;display:flex;gap:10px;align-items:center;">
+        <button type="button" class="primary" id="applyBtn">Apply</button>
+        <span class="pill" id="activeFilter"></span>
+      </div>
+    </div>
+
+    <div class="card" id="groupSummaryCard">
+      <div class="panelhead"><h2>Per-group summary</h2><span class="pill" id="grpSumCount"></span></div>
+      <div class="groupcards" id="groupCards"></div>
+    </div>
+
+    <div class="tabs" id="tabs">
+      <button type="button" data-tab="apps" class="on">Top Apps</button>
+      <button type="button" data-tab="devices">Top Devices</button>
+    </div>
+
+    <!-- ===== TOP APPS TAB ===== -->
+    <div id="tab-apps">
+      <div class="card" id="appsCard">
+        <div class="panelhead">
+          <h2>Top applications by data used</h2>
+          <span class="pill" id="appCount"></span>
+        </div>
+        <canvas id="appChart" style="max-height:300px;"></canvas>
+        <table id="appTable">
+          <thead><tr>
+            <th class="rank">#</th><th>Application</th>
+            <th class="num bar-wifi">Upload</th><th class="num bar-cell">Download</th><th class="num">Total</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="hint">Click an app row or bar to see which devices consumed it.</div>
+      </div>
+
+      <div class="card hidden" id="drillCard">
+        <div class="panelhead">
+          <h2>Devices using <span class="appname" id="drillApp"></span></h2>
+          <a href="#" class="back" id="drillBack">← all apps</a>
+        </div>
+        <canvas id="drillChart" style="max-height:280px;"></canvas>
+        <table id="drillTable">
+          <thead><tr>
+            <th class="rank">#</th><th>Device</th>
+            <th class="num bar-wifi">Upload</th><th class="num bar-cell">Download</th><th class="num">Total</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===== TOP DEVICES TAB ===== -->
+    <div id="tab-devices" class="hidden">
+      <div class="card" id="devicesCard">
+        <div class="panelhead">
+          <h2>Top devices by data used</h2>
+          <span class="pill" id="devCount"></span>
+        </div>
+        <canvas id="devChart" style="max-height:300px;"></canvas>
+        <table id="devTable">
+          <thead><tr>
+            <th class="rank">#</th><th>Device</th>
+            <th class="num bar-wifi">Upload</th><th class="num bar-cell">Download</th><th class="num">Total</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="hint">Click a device row or bar to see which apps it consumed.</div>
+      </div>
+
+      <div class="card hidden" id="devDrillCard">
+        <div class="panelhead">
+          <h2>Apps used by <span class="appname" id="devDrillName"></span></h2>
+          <a href="#" class="back" id="devDrillBack">← all devices</a>
+        </div>
+        <canvas id="devDrillChart" style="max-height:300px;"></canvas>
+        <table id="devDrillTable">
+          <thead><tr>
+            <th class="rank">#</th><th>Application</th>
+            <th class="num bar-wifi">Upload</th><th class="num bar-cell">Download</th><th class="num">Total</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let ROWS = [];          // normalized records
+let REPORT_CREATED = '—';
+
+// ---- Device lookup (email + group path per device name), fetched once from
+// this app's own MobiControl session -- replaces the template's hardcoded
+// DEVICE_MAP with live data. ----
+let deviceLookup = {};
+let lookupReady = fetch('/api/device-lookup')
+  .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  .then(data => {
+    (data.devices || []).forEach(d => { if (d && d.name) deviceLookup[d.name.trim().toLowerCase()] = d; });
+    $('lookupStatus').textContent = Object.keys(deviceLookup).length + ' device(s) loaded from MobiControl for email/group matching.';
+  })
+  .catch(err => { $('lookupStatus').textContent = 'Could not load device list from MobiControl (' + err.message + '). Devices will show without email/group.'; });
+
+function lookupFor(deviceName) { return deviceLookup[String(deviceName || '').trim().toLowerCase()] || null; }
+function deviceLabel(deviceName) {
+  const lookup = lookupFor(deviceName);
+  return (lookup && lookup.email) ? lookup.email : deviceName;
+}
+function deviceGroup(deviceName) {
+  const lookup = lookupFor(deviceName);
+  if (lookup && lookup.path) return lookup.path;
+  return deviceName.includes(':') ? deviceName.split(':')[0].trim() : '(ungrouped)';
+}
+
+let netFilter = 'all';
+let selectedGroups = null;   // null = all groups
+let selectedApp = null;
+let appChart=null, drillChart=null;
+let devChart=null, devDrillChart=null;
+let currentTab='apps';
+let lastRows=[];   // rows from the most recent apply(), shared by both tabs
+
+// ---------- formatting ----------
+const fmt = kb => {
+  if (kb >= 1048576) return (kb/1048576).toFixed(2)+' GB';
+  if (kb >= 1024)    return (kb/1024).toFixed(1)+' MB';
+  return kb.toFixed(0)+' KB';
+};
+
+// ---------- import ----------
+const drop = $('drop'), fileInput = $('file');
+drop.onclick = () => fileInput.click();
+['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('drag');}));
+['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('drag');}));
+drop.addEventListener('drop', ev => { if(ev.dataTransfer.files.length) handleFile(ev.dataTransfer.files[0]); });
+fileInput.onchange = () => { if(fileInput.files.length) handleFile(fileInput.files[0]); };
+$('resetBtn').onclick = () => location.reload();
+
+function handleFile(file){
+  const err = $('importErr'); err.classList.add('hidden'); err.textContent = '';
+  Papa.parse(file, {
+    skipEmptyLines: false,
+    complete: res => {
+      lookupReady.finally(() => {
+        try { ingest(res.data); }
+        catch(e){ err.textContent = e.message; err.classList.remove('hidden'); }
       });
+    },
+    error: e => { err.textContent = 'Could not read file: '+e.message; err.classList.remove('hidden'); }
+  });
+}
 
-    function lookupFor(deviceName) {
-      return deviceLookup[String(deviceName || '').trim().toLowerCase()] || null;
+function num(v){ const n = parseFloat(String(v==null?'':v).replace(/,/g,'').trim()); return isFinite(n)?n:0; }
+function normCell(c){ return String(c==null?'':c).trim(); }
+
+// MobiControl's export has a few junk title/summary rows above the real
+// header, and the header's own column positions shift depending on merged
+// cells in the source spreadsheet -- so the header row is found by content
+// (a row containing both "Device Name" and "Volume"), not a fixed index.
+function findHeaderRow(rows){
+  for (let i=0;i<Math.min(rows.length,25);i++){
+    const row=rows[i]; let hasDevice=false, hasVolume=false;
+    for (let j=0;j<row.length;j++){
+      const c=normCell(row[j]).toLowerCase();
+      if (/device\s*name/.test(c)) hasDevice=true;
+      if (/volume/.test(c)) hasVolume=true;
     }
+    if (hasDevice && hasVolume) return i;
+  }
+  return -1;
+}
+function mapColumns(headerRow){
+  const cols={};
+  headerRow.forEach((cell,idx)=>{
+    const c=normCell(cell).toLowerCase();
+    if (cols.dateTime===undefined && /date/.test(c)) cols.dateTime=idx;
+    else if (cols.device===undefined && /device\s*name/.test(c)) cols.device=idx;
+    else if (cols.upload===undefined && /upload/.test(c)) cols.upload=idx;
+    else if (cols.download===undefined && /download/.test(c)) cols.download=idx;
+    else if (cols.volume===undefined && /volume/.test(c)) cols.volume=idx;
+    else if (cols.type===undefined && /^type$/.test(c)) cols.type=idx;
+    else if (cols.app===undefined && /applic/.test(c)) cols.app=idx;
+  });
+  return cols;
+}
+function parseDate(v){
+  const s=normCell(v); if(!s) return null;
+  const d=new Date(s); return isNaN(d.getTime())?null:d;
+}
+function isWifi(t){ return /wi-?fi/i.test(t||''); }
+function isCell(t){ return /cell|mobile|data|3g|4g|5g|lte/i.test(t||''); }
 
-    // ---- Report parsing ----
-    function normCell(c) {
-      return String(c == null ? '' : c).trim();
-    }
+function ingest(data){
+  if(!data.length) throw new Error('The file has no rows.');
+  const headerIdx = findHeaderRow(data);
+  if (headerIdx===-1) throw new Error('Could not find a header row with "Device Name" and "Volume" columns.');
+  const cols = mapColumns(data[headerIdx]);
+  if (cols.device===undefined || cols.volume===undefined) {
+    throw new Error('Missing expected column(s): device name, volume (kb).');
+  }
 
-    function findHeaderRow(rows) {
-      for (var i = 0; i < Math.min(rows.length, 25); i++) {
-        var row = rows[i];
-        var hasDeviceName = false, hasVolume = false;
-        for (var j = 0; j < row.length; j++) {
-          var c = normCell(row[j]).toLowerCase();
-          if (/device\s*name/.test(c)) hasDeviceName = true;
-          if (/volume/.test(c)) hasVolume = true;
-        }
-        if (hasDeviceName && hasVolume) return i;
-      }
-      return -1;
-    }
-
-    function mapColumns(headerRow) {
-      var cols = {};
-      headerRow.forEach(function (cell, idx) {
-        var c = normCell(cell).toLowerCase();
-        if (cols.dateTime === undefined && /date/.test(c)) cols.dateTime = idx;
-        else if (cols.deviceName === undefined && /device\s*name/.test(c)) cols.deviceName = idx;
-        else if (cols.upload === undefined && /upload/.test(c)) cols.upload = idx;
-        else if (cols.download === undefined && /download/.test(c)) cols.download = idx;
-        else if (cols.volume === undefined && /volume/.test(c)) cols.volume = idx;
-        else if (cols.type === undefined && /^type$/.test(c)) cols.type = idx;
-        else if (cols.roaming === undefined && /roaming/.test(c)) cols.roaming = idx;
-        else if (cols.carrier === undefined && /carrier/.test(c)) cols.carrier = idx;
-        else if (cols.appId === undefined && /applic/.test(c)) cols.appId = idx;
-      });
-      return cols;
-    }
-
-    function toNumber(v) {
-      var n = parseFloat(String(v == null ? '' : v).replace(/,/g, '').trim());
-      return isFinite(n) ? n : 0;
-    }
-
-    function parseDate(v) {
-      var s = normCell(v);
-      if (!s) return null;
-      var d = new Date(s);
-      return isNaN(d.getTime()) ? null : d;
-    }
-
-    // Network classification is inferred from the "Type" column. MobiControl
-    // deployments vary in what values that column holds -- this matches the
-    // common "Wi-Fi" / "Cellular" (or "Mobile"/"Data"/3G-5G/LTE) wording.
-    // Rows whose Type doesn't match either are still counted under "All" but
-    // won't match the Wi-Fi/Cellular filter buttons specifically.
-    function classifyNetwork(typeVal) {
-      var t = normCell(typeVal).toLowerCase();
-      if (/wi-?fi/.test(t)) return 'wifi';
-      if (/cell|mobile|data|3g|4g|5g|lte/.test(t)) return 'cellular';
-      return 'other';
-    }
-
-    function parseReport(rawRows) {
-      var headerIdx = findHeaderRow(rawRows);
-      if (headerIdx === -1) {
-        return { error: 'Could not find a header row with "Device Name" and "Volume" columns.' };
-      }
-      var cols = mapColumns(rawRows[headerIdx]);
-      var rows = [];
-
-      for (var i = headerIdx + 1; i < rawRows.length; i++) {
-        var row = rawRows[i];
-        if (!row || row.length === 0) continue;
-        var deviceName = normCell(row[cols.deviceName]);
-        if (!deviceName) continue;
-
-        rows.push({
-          deviceName: deviceName,
-          date: cols.dateTime !== undefined ? parseDate(row[cols.dateTime]) : null,
-          volume: toNumber(row[cols.volume]),
-          upload: cols.upload !== undefined ? toNumber(row[cols.upload]) : 0,
-          download: cols.download !== undefined ? toNumber(row[cols.download]) : 0,
-          appId: cols.appId !== undefined ? (normCell(row[cols.appId]) || '(unknown)') : '(unknown)',
-          network: cols.type !== undefined ? classifyNetwork(row[cols.type]) : 'other',
-        });
-      }
-
-      return { headerIdx: headerIdx, cols: cols, rows: rows };
-    }
-
-    function fullDateRange(rows) {
-      var min = null, max = null;
-      rows.forEach(function (r) {
-        if (!r.date) return;
-        if (!min || r.date < min) min = r.date;
-        if (!max || r.date > max) max = r.date;
-      });
-      return { min: min, max: max };
-    }
-
-    function aggregate(rows) {
-      var deviceStats = {}, deviceOrder = [];
-      var appStats = {}, appOrder = [];
-      var totalVolume = 0, totalUpload = 0, totalDownload = 0, totalRecords = 0;
-
-      rows.forEach(function (r) {
-        totalVolume += r.volume; totalUpload += r.upload; totalDownload += r.download; totalRecords += 1;
-
-        if (!deviceStats[r.deviceName]) { deviceStats[r.deviceName] = { volume: 0, upload: 0, download: 0, records: 0 }; deviceOrder.push(r.deviceName); }
-        var ds = deviceStats[r.deviceName];
-        ds.volume += r.volume; ds.upload += r.upload; ds.download += r.download; ds.records += 1;
-
-        if (!appStats[r.appId]) { appStats[r.appId] = { volume: 0, upload: 0, download: 0, records: 0 }; appOrder.push(r.appId); }
-        var as = appStats[r.appId];
-        as.volume += r.volume; as.upload += r.upload; as.download += r.download; as.records += 1;
-      });
-
-      var devices = deviceOrder.map(function (name) {
-        var lookup = lookupFor(name);
-        return Object.assign({ name: name, email: lookup ? lookup.email : null, path: lookup ? lookup.path : '' }, deviceStats[name]);
-      });
-      var apps = appOrder.map(function (name) { return Object.assign({ name: name }, appStats[name]); });
-      var groupCount = new Set(devices.map(function (d) { return d.path; }).filter(Boolean)).size;
-
-      return {
-        totals: { totalVolume: totalVolume, totalUpload: totalUpload, totalDownload: totalDownload, totalRecords: totalRecords, uniqueDevices: devices.length, uniqueApps: apps.length, uniqueGroups: groupCount },
-        devices: devices,
-        apps: apps,
-      };
-    }
-
-    function formatVolume(kb) {
-      if (kb >= 1024 * 1024) return (kb / (1024 * 1024)).toFixed(2) + ' GB';
-      if (kb >= 1024) return (kb / 1024).toFixed(2) + ' MB';
-      return kb.toFixed(1) + ' KB';
-    }
-
-    function formatDate(d) {
-      if (!d) return '—';
-      return d.toISOString().slice(0, 10);
-    }
-
-    // ---- State ----
-    var lastRows = [];
-    var reportDateRange = { min: null, max: null };
-    var filters = { dateFrom: null, dateTo: null, network: 'all', topN: 10, selectedPaths: [] };
-    var topChart = null;
-    var drillChart = null;
-    var lastAgg = null;
-    var currentTab = 'apps';
-
-    function filterRows(rows) {
-      return rows.filter(function (r) {
-        if (filters.dateFrom && r.date && r.date < filters.dateFrom) return false;
-        if (filters.dateTo && r.date && r.date > filters.dateTo) return false;
-        if (filters.network !== 'all' && r.network !== filters.network) return false;
-        if (filters.selectedPaths.length > 0) {
-          var lookup = lookupFor(r.deviceName);
-          var path = lookup ? lookup.path : '';
-          if (filters.selectedPaths.indexOf(path) === -1) return false;
-        }
-        return true;
-      });
-    }
-
-    function renderGroupFilterList(rows) {
-      var paths = new Set();
-      rows.forEach(function (r) {
-        var lookup = lookupFor(r.deviceName);
-        if (lookup && lookup.path) paths.add(lookup.path);
-      });
-      var list = document.getElementById('groupFilterList');
-      var sorted = Array.from(paths).sort();
-      if (sorted.length === 0) {
-        list.innerHTML = '<p class="empty">No group data available for these devices.</p>';
-        return;
-      }
-      list.innerHTML = sorted.map(function (p) {
-        var esc = p.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-        return '<label class="filter-option"><input type="checkbox" value="' + esc + '" class="groupCheckbox"> <span>' + esc + '</span></label>';
-      }).join('');
-    }
-
-    function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
-    function escAttr(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
-
-    // Chart values are plotted in GB (matches the reference dashboard's
-    // scale) regardless of the actual magnitude -- tables still use
-    // formatVolume()'s auto KB/MB/GB scaling, this is chart-axis-only.
-    function toGB(kb) { return kb / (1024 * 1024); }
-
-    // Chart.js config shared by the top-list chart and the drill-down chart --
-    // colors, grid and legend styling matched to the reference dashboard
-    // (sotidash.freehosting.dev): #4cc3ff / #ffb648 bars, #1c2840 grid,
-    // #8597b0 ticks/legend text. `horizontal` flips index/value axes --
-    // the top-list chart stays vertical, the drill-down chart is horizontal.
-    function CHART_CONFIG(labels, uploadData, downloadData, opts) {
-      var horizontal = !!(opts && opts.horizontal);
-      var valueAxis = horizontal ? 'x' : 'y';
-      var categoryAxis = horizontal ? 'y' : 'x';
-      var scales = {};
-      scales[valueAxis] = {
-        stacked: true,
-        beginAtZero: true,
-        ticks: { color: '#8597b0' },
-        grid: { color: '#1c2840' },
-        title: { display: true, text: 'GB', color: '#8597b0' },
-      };
-      scales[categoryAxis] = {
-        stacked: true,
-        ticks: { color: '#8597b0', maxRotation: horizontal ? 0 : 60, minRotation: horizontal ? 0 : 30 },
-        grid: { color: '#1c2840' },
-      };
-
-      return {
-        type: 'bar',
-        data: {
-          labels: labels,
-          datasets: [
-            { label: 'Upload', data: uploadData.map(toGB), backgroundColor: '#4cc3ff' },
-            { label: 'Download', data: downloadData.map(toGB), backgroundColor: '#ffb648' },
-          ],
-        },
-        options: {
-          indexAxis: horizontal ? 'y' : 'x',
-          responsive: true,
-          maintainAspectRatio: true,
-          plugins: { legend: { labels: { color: '#8597b0' } } },
-          scales: scales,
-        },
-      };
-    }
-
-    // Groups already-filtered rows by an arbitrary key (app id, or user/device
-    // identity) for the drill-down view -- e.g. "which users used this app"
-    // or "which apps did this user use".
-    function aggregateGroup(rows, keyFn) {
-      var stats = {}, order = [];
-      rows.forEach(function (r) {
-        var k = keyFn(r);
-        if (!stats[k]) { stats[k] = { key: k, volume: 0, upload: 0, download: 0, records: 0 }; order.push(k); }
-        var s = stats[k];
-        s.volume += r.volume; s.upload += r.upload; s.download += r.download; s.records += 1;
-      });
-      return order.map(function (k) { return stats[k]; }).sort(function (a, b) { return b.volume - a.volume; });
-    }
-
-    function hideDrillDown() {
-      document.getElementById('drillDownCard').classList.add('hidden');
-      if (drillChart) { drillChart.destroy(); drillChart = null; }
-    }
-
-    // Click-through from a Top Applications row -> which users consumed that
-    // app; or from a Top Users row -> which apps that user consumed. Mirrors
-    // the reference dashboard's "click a row to see its breakdown" behaviour.
-    function showDrillDown(type, key) {
-      var filtered = filterRows(lastRows);
-      var rows, title, colLabel, groupKeyFn;
-
-      if (type === 'app') {
-        rows = filtered.filter(function (r) { return r.appId === key; });
-        groupKeyFn = function (r) {
-          var lookup = lookupFor(r.deviceName);
-          return lookup && lookup.email ? lookup.email : r.deviceName;
-        };
-        title = 'Users using ' + key;
-        colLabel = 'User';
-      } else {
-        rows = filtered.filter(function (r) { return r.deviceName === key; });
-        groupKeyFn = function (r) { return r.appId; };
-        var lookup = lookupFor(key);
-        title = 'Applications used by ' + (lookup && lookup.email ? lookup.email : key);
-        colLabel = 'Application';
-      }
-
-      var grouped = aggregateGroup(rows, groupKeyFn).slice(0, filters.topN);
-
-      document.getElementById('drillTitle').textContent = title;
-      var thead = document.getElementById('drillThead');
-      var tbody = document.getElementById('drillBody');
-      thead.innerHTML = '<tr><th>#</th><th>' + colLabel + '</th><th>Upload</th><th>Download</th><th>Total</th></tr>';
-      tbody.innerHTML = grouped.map(function (g, i) {
-        return '<tr><td>' + (i + 1) + '</td><td>' + esc(g.key) + '</td><td>' + formatVolume(g.upload) +
-          '</td><td>' + formatVolume(g.download) + '</td><td>' + formatVolume(g.volume) + '</td></tr>';
-      }).join('') || '<tr><td colspan="5" class="empty">No data for this filter.</td></tr>';
-
-      var ctx = document.getElementById('drillChart').getContext('2d');
-      if (drillChart) drillChart.destroy();
-      drillChart = new Chart(ctx, CHART_CONFIG(
-        grouped.map(function (g) { return g.key; }),
-        grouped.map(function (g) { return g.upload; }),
-        grouped.map(function (g) { return g.download; }),
-        { horizontal: true }
-      ));
-
-      var card = document.getElementById('drillDownCard');
-      card.classList.remove('hidden');
-      card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
-
-    // Renders the active tab's (Top Applications / Top Users) chart + table
-    // from the already-computed, already-sorted lastAgg. Cheap enough to
-    // re-run on every tab click without touching filters or re-aggregating.
-    function renderTopList() {
-      if (!lastAgg) return;
-      hideDrillDown();
-      var isApps = currentTab === 'apps';
-      var all = isApps ? lastAgg.apps : lastAgg.devices;
-      var top = all.slice(0, filters.topN);
-
-      document.getElementById('topListTitle').textContent = isApps ? 'Top applications by data used' : 'Top users by data used';
-      document.getElementById('topListCount').textContent =
-        top.length + ' shown · ' + all.length + ' ' + (isApps ? (all.length === 1 ? 'app' : 'apps') : (all.length === 1 ? 'user' : 'users'));
-
-      var thead = document.getElementById('topListThead');
-      var tbody = document.getElementById('topListBody');
-
-      if (isApps) {
-        thead.innerHTML = '<tr><th>#</th><th>Application</th><th>Upload</th><th>Download</th><th>Total</th></tr>';
-        tbody.innerHTML = top.map(function (a, i) {
-          return '<tr><td>' + (i + 1) + '</td><td><a href="#" class="row-link" data-type="app" data-key="' + escAttr(a.name) + '">' + esc(a.name) + '</a></td><td>' + formatVolume(a.upload) +
-            '</td><td>' + formatVolume(a.download) + '</td><td>' + formatVolume(a.volume) + '</td></tr>';
-        }).join('') || '<tr><td colspan="5" class="empty">No applications match the current filter.</td></tr>';
-      } else {
-        thead.innerHTML = '<tr><th>#</th><th>User</th><th>Group Path</th><th>Upload</th><th>Download</th><th>Total</th></tr>';
-        tbody.innerHTML = top.map(function (d, i) {
-          var display = d.email || d.name;
-          var tag = d.email ? '' : ' <span class="tag">unmapped</span>';
-          return '<tr><td>' + (i + 1) + '</td><td><a href="#" class="row-link" data-type="user" data-key="' + escAttr(d.name) + '">' + esc(display) + '</a>' + tag + '</td><td>' + esc(d.path) + '</td><td>' +
-            formatVolume(d.upload) + '</td><td>' + formatVolume(d.download) + '</td><td>' + formatVolume(d.volume) + '</td></tr>';
-        }).join('') || '<tr><td colspan="6" class="empty">No users match the current filter.</td></tr>';
-      }
-
-      var ctx = document.getElementById('topChart').getContext('2d');
-      if (topChart) topChart.destroy();
-      topChart = new Chart(ctx, CHART_CONFIG(
-        top.map(function (x) { return isApps ? x.name : (x.email || x.name); }),
-        top.map(function (x) { return x.upload; }),
-        top.map(function (x) { return x.download; })
-      ));
-    }
-
-    function renderAll() {
-      var filtered = filterRows(lastRows);
-      var agg = aggregate(filtered);
-      agg.devices = agg.devices.slice().sort(function (a, b) { return b.volume - a.volume; });
-      agg.apps = agg.apps.slice().sort(function (a, b) { return b.volume - a.volume; });
-      lastAgg = agg;
-
-      document.getElementById('statVolume').textContent = formatVolume(agg.totals.totalVolume);
-      document.getElementById('statApps').textContent = agg.totals.uniqueApps;
-      document.getElementById('statDevices').textContent = agg.totals.uniqueDevices;
-      document.getElementById('statGroups').textContent = agg.totals.uniqueGroups;
-      document.getElementById('statDateRange').textContent =
-        (filters.dateFrom ? formatDate(filters.dateFrom) : formatDate(reportDateRange.min)) + ' → ' +
-        (filters.dateTo ? formatDate(filters.dateTo) : formatDate(reportDateRange.max));
-      document.getElementById('statReportCreated').textContent = formatDate(reportDateRange.max);
-
-      var networkLabel = filters.network === 'all' ? 'all networks' : filters.network === 'wifi' ? 'Wi-Fi only' : 'Cellular only';
-      document.getElementById('filterPill').textContent =
-        formatDate(filters.dateFrom || reportDateRange.min) + ' → ' + formatDate(filters.dateTo || reportDateRange.max) + ' · ' + networkLabel;
-
-      renderTopList();
-    }
-
-    function loadReport(result) {
-      lastRows = result.rows;
-      reportDateRange = fullDateRange(lastRows);
-      filters = { dateFrom: reportDateRange.min, dateTo: reportDateRange.max, network: 'all', topN: 10, selectedPaths: [] };
-
-      var fromInput = document.getElementById('fromDate');
-      var toInput = document.getElementById('toDate');
-      fromInput.value = reportDateRange.min ? formatDate(reportDateRange.min) : '';
-      toInput.value = reportDateRange.max ? formatDate(reportDateRange.max) : '';
-      document.querySelectorAll('#networkSeg .seg-btn').forEach(function (b) { b.classList.toggle('active', b.dataset.network === 'all'); });
-      document.getElementById('topNSelect').value = '10';
-
-      renderGroupFilterList(lastRows);
-      renderAll();
-      document.getElementById('results').classList.remove('hidden');
-    }
-
-    // ---- File handling ----
-    function showError(msg) {
-      var el = document.getElementById('err');
-      if (!msg) { el.classList.add('hidden'); el.textContent = ''; return; }
-      el.textContent = msg;
-      el.classList.remove('hidden');
-    }
-
-    function handleFile(file) {
-      showError('');
-      if (!file) return;
-      Papa.parse(file, {
-        skipEmptyLines: false,
-        complete: function (results) {
-          lookupReady.finally(function () {
-            var parsed = parseReport(results.data);
-            if (parsed.error) { showError(parsed.error); return; }
-            if (parsed.rows.length === 0) {
-              showError('No usage rows found in this file (0 records with a device name). Check it\'s the right export.');
-              return;
-            }
-            loadReport(parsed);
-          });
-        },
-        error: function (err) {
-          showError('Could not read file: ' + err.message);
-        },
-      });
-    }
-
-    var dropZone = document.getElementById('dropZone');
-    var fileInput = document.getElementById('fileInput');
-    dropZone.addEventListener('click', function () { fileInput.click(); });
-    fileInput.addEventListener('change', function (e) { handleFile(e.target.files[0]); });
-    ['dragenter', 'dragover'].forEach(function (evt) {
-      dropZone.addEventListener(evt, function (e) { e.preventDefault(); dropZone.classList.add('drag'); });
+  ROWS = [];
+  let maxDate = null;
+  for (let i=headerIdx+1;i<data.length;i++){
+    const row = data[i];
+    if (!row || row.length===0) continue;
+    const device = normCell(row[cols.device]);
+    if (!device) continue;
+    const date = cols.dateTime!==undefined ? parseDate(row[cols.dateTime]) : null;
+    if (date && (!maxDate || date>maxDate)) maxDate = date;
+    ROWS.push({
+      device,
+      date,
+      vol: num(row[cols.volume]),
+      up: cols.upload!==undefined ? num(row[cols.upload]) : 0,
+      down: cols.download!==undefined ? num(row[cols.download]) : 0,
+      type: cols.type!==undefined ? normCell(row[cols.type]) : '',
+      app: cols.app!==undefined ? (normCell(row[cols.app]) || '(unknown)') : '(unknown)',
     });
-    ['dragleave', 'drop'].forEach(function (evt) {
-      dropZone.addEventListener(evt, function (e) { e.preventDefault(); dropZone.classList.remove('drag'); });
-    });
-    dropZone.addEventListener('drop', function (e) {
-      var file = e.dataTransfer.files && e.dataTransfer.files[0];
-      handleFile(file);
-    });
+  }
+  ROWS = ROWS.filter(r => r.date);
+  if(!ROWS.length) throw new Error('No usage rows with a valid date were found. Check this is the right export.');
+  REPORT_CREATED = maxDate ? maxDate.toISOString().slice(0,10) : '—';
 
-    // ---- Top Applications / Top Users tab wiring ----
-    document.querySelectorAll('.tab-btn').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('active'); });
-        btn.classList.add('active');
-        currentTab = btn.dataset.tab;
-        renderTopList();
-      });
-    });
+  buildControls();
+  $('importCard').classList.add('hidden');
+  $('resetBtn').classList.remove('hidden');
+  $('dash').classList.remove('hidden');
+  apply();
+}
 
-    // Click-through: app name -> which users consumed it; user name -> which
-    // apps that user consumed. Delegated on the tbody since rows are
-    // re-rendered on every Apply/tab switch.
-    document.getElementById('topListBody').addEventListener('click', function (e) {
-      var link = e.target.closest('.row-link');
-      if (!link) return;
-      e.preventDefault();
-      showDrillDown(link.dataset.type, link.dataset.key);
-    });
+// ---------- controls ----------
+function buildControls(){
+  const dates = ROWS.map(r=>r.date);
+  const min = new Date(Math.min(...dates)), max = new Date(Math.max(...dates));
+  const iso = d => d.toISOString().slice(0,10);
+  $('from').value = iso(min); $('from').min = iso(min); $('from').max = iso(max);
+  $('to').value   = iso(max); $('to').min   = iso(min); $('to').max   = iso(max);
 
-    document.getElementById('drillBackLink').addEventListener('click', function (e) {
-      e.preventDefault();
-      hideDrillDown();
-    });
+  const groups = [...new Set(ROWS.map(r=>deviceGroup(r.device)))].sort();
+  buildGroupSelect(groups);
 
-    // ---- Filter bar wiring ----
-    document.querySelectorAll('#networkSeg .seg-btn').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        document.querySelectorAll('#networkSeg .seg-btn').forEach(function (b) { b.classList.remove('active'); });
-        btn.classList.add('active');
-      });
-    });
+  const totalKb = ROWS.reduce((s,r)=>s+r.vol,0);
+  $('summary').innerHTML = `
+    <div class="stat"><div class="n">${fmt(totalKb)}</div><div class="l">total volume</div></div>
+    <div class="stat"><div class="n">${new Set(ROWS.map(r=>r.app)).size}</div><div class="l">apps</div></div>
+    <div class="stat"><div class="n">${new Set(ROWS.map(r=>r.device)).size}</div><div class="l">devices</div></div>
+    <div class="stat"><div class="n">${groups.length}</div><div class="l">groups</div></div>
+    <div class="stat"><div class="n">${iso(min)} → ${iso(max)}</div><div class="l">date range</div></div>
+    <div class="stat"><div class="n">${REPORT_CREATED}</div><div class="l">report created</div></div>`;
+}
 
-    document.getElementById('applyMainFilterBtn').addEventListener('click', function () {
-      var fromVal = document.getElementById('fromDate').value;
-      var toVal = document.getElementById('toDate').value;
-      filters.dateFrom = fromVal ? new Date(fromVal + 'T00:00:00') : null;
-      filters.dateTo = toVal ? new Date(toVal + 'T23:59:59') : null;
-      var activeSeg = document.querySelector('#networkSeg .seg-btn.active');
-      filters.network = activeSeg ? activeSeg.dataset.network : 'all';
-      filters.topN = parseInt(document.getElementById('topNSelect').value, 10) || 10;
-      filters.selectedPaths = Array.from(document.querySelectorAll('.groupCheckbox:checked')).map(function (el) { return el.value; });
-      if (lastRows.length > 0) renderAll();
-    });
+$('netSeg').querySelectorAll('button').forEach(b=>{
+  b.onclick=()=>{ $('netSeg').querySelectorAll('button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); netFilter=b.dataset.net; };
+});
 
-    document.getElementById('clearGroupsLink').addEventListener('click', function (e) {
-      e.preventDefault();
-      document.querySelectorAll('.groupCheckbox:checked').forEach(function (el) { el.checked = false; });
-    });
-  })();
-  </script>
+// ---------- group multi-select ----------
+function buildGroupSelect(groups){
+  selectedGroups = new Set(groups);   // default: all selected
+  const pop = $('grpPop');
+  pop.innerHTML =
+    `<div class="msel-actions"><a id="grpAll">Select all</a><a id="grpNone">Clear</a></div>` +
+    groups.map(g=>`<label><input type="checkbox" class="grpChk" value="${g.replace(/"/g,'&quot;')}" checked> ${g}</label>`).join('');
+  pop.querySelectorAll('.grpChk').forEach(c=>{
+    c.onchange=()=>{ c.checked ? selectedGroups.add(c.value) : selectedGroups.delete(c.value); updateGrpLabel(groups); };
+  });
+  pop.querySelector('#grpAll').onclick=()=>{ pop.querySelectorAll('.grpChk').forEach(c=>{c.checked=true;selectedGroups.add(c.value);}); updateGrpLabel(groups); };
+  pop.querySelector('#grpNone').onclick=()=>{ pop.querySelectorAll('.grpChk').forEach(c=>{c.checked=false;}); selectedGroups.clear(); updateGrpLabel(groups); };
+  updateGrpLabel(groups);
+}
+function updateGrpLabel(groups){
+  const n=selectedGroups.size, tot=groups.length;
+  $('grpToggle').textContent = (n===0)?'No groups' : (n===tot)?'All groups' : `${n} of ${tot} groups`;
+}
+$('grpToggle').onclick=(e)=>{ e.stopPropagation(); $('grpPop').classList.toggle('hidden'); };
+document.addEventListener('click',(e)=>{ if(!$('grpSel').contains(e.target)) $('grpPop').classList.add('hidden'); });
+
+$('applyBtn').onclick = apply;
+$('drillBack').onclick = (e) => { e.preventDefault(); selectedApp=null; $('drillCard').classList.add('hidden');
+  document.querySelectorAll('#appTable tr.sel').forEach(t=>t.classList.remove('sel')); };
+$('devDrillBack').onclick=(e)=>{ e.preventDefault(); $('devDrillCard').classList.add('hidden');
+  document.querySelectorAll('#devTable tr.sel').forEach(t=>t.classList.remove('sel')); };
+
+// ---------- filtering ----------
+function activeRows(){
+  const from = new Date($('from').value+'T00:00:00');
+  const to   = new Date($('to').value+'T23:59:59');
+  const grpOn = selectedGroups && selectedGroups.size>0;
+  return ROWS.filter(r =>
+    r.date>=from && r.date<=to &&
+    (netFilter==='all' || (netFilter==='wifi'?isWifi(r.type):isCell(r.type))) &&
+    (!grpOn || selectedGroups.has(deviceGroup(r.device)))
+  );
+}
+
+function apply(){
+  selectedApp=null; $('drillCard').classList.add('hidden');
+  $('devDrillCard').classList.add('hidden');
+  const rows = activeRows();
+  lastRows = rows;
+  const n = +$('topN').value;
+
+  const byApp = {};
+  rows.forEach(r=>{
+    const a = byApp[r.app] || (byApp[r.app]={up:0,down:0,total:0});
+    a.up+=r.up; a.down+=r.down; a.total+=r.vol;
+  });
+  const apps = Object.entries(byApp).map(([app,v])=>({app,...v}))
+    .sort((x,y)=>y.total-x.total).slice(0,n);
+
+  const byDev = {};
+  rows.forEach(r=>{
+    const d = byDev[r.device] || (byDev[r.device]={up:0,down:0,total:0});
+    d.up+=r.up; d.down+=r.down; d.total+=r.vol;
+  });
+  const devices = Object.entries(byDev).map(([device,v])=>({device,...v}))
+    .sort((x,y)=>y.total-x.total).slice(0,n);
+
+  const grpTxt = (selectedGroups && $('grpToggle')) ? ' · '+$('grpToggle').textContent.toLowerCase() : '';
+  $('activeFilter').textContent =
+    `${$('from').value} → ${$('to').value} · ${netFilter==='all'?'all networks':netFilter}${grpTxt}`;
+  $('appCount').textContent = `${apps.length} shown · ${rows.length.toLocaleString()} records`;
+  $('devCount').textContent = `${devices.length} shown · ${rows.length.toLocaleString()} records`;
+
+  renderAppTable(apps);
+  renderAppChart(apps);
+  renderDevTable(devices);
+  renderDevChart(devices);
+  renderGroupCards(rows);
+}
+
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+
+// ---------- top apps tab ----------
+function renderAppTable(apps){
+  const tb=$('appTable').querySelector('tbody'); tb.innerHTML='';
+  if (!apps.length) { tb.innerHTML = '<tr><td colspan="5" class="empty">No applications match the current filter.</td></tr>'; return; }
+  apps.forEach((a,i)=>{
+    const tr=document.createElement('tr'); tr.className='click';
+    tr.innerHTML=`<td class="rank">${i+1}</td><td><span class="appname">${esc(a.app)}</span></td>
+      <td class="num bar-wifi">${fmt(a.up)}</td>
+      <td class="num bar-cell">${fmt(a.down)}</td>
+      <td class="num">${fmt(a.total)}</td>`;
+    tr.onclick=()=>{ drillApp(a.app);
+      document.querySelectorAll('#appTable tr.sel').forEach(t=>t.classList.remove('sel'));
+      tr.classList.add('sel'); };
+    tb.appendChild(tr);
+  });
+}
+
+function renderAppChart(apps){
+  if(appChart) appChart.destroy();
+  appChart=new Chart($('appChart'),{
+    type:'bar',
+    data:{labels:apps.map(a=>a.app),datasets:[
+      {label:'Upload',data:apps.map(a=>a.up/1048576),backgroundColor:'#4cc3ff'},
+      {label:'Download',data:apps.map(a=>a.down/1048576),backgroundColor:'#ffb648'}]},
+    options:{responsive:true,
+      plugins:{legend:{labels:{color:'#8597b0'}},tooltip:{callbacks:{
+        label:c=>`${c.dataset.label}: ${c.parsed.y.toFixed(2)} GB`}}},
+      scales:{x:{stacked:true,ticks:{color:'#8597b0',maxRotation:60,minRotation:30},grid:{color:'#1c2840'}},
+              y:{stacked:true,ticks:{color:'#8597b0'},grid:{color:'#1c2840'},title:{display:true,text:'GB',color:'#5d6f8a'}}},
+      onClick:(e,el)=>{ if(el.length) drillApp(apps[el[0].index].app); }}
+  });
+}
+
+// ---------- top devices tab ----------
+function shortDev(d){ const p=d.split(/[:\-]/); return p[p.length-1].trim() || d; }
+
+function renderDevTable(devices){
+  const tb=$('devTable').querySelector('tbody'); tb.innerHTML='';
+  if (!devices.length) { tb.innerHTML = '<tr><td colspan="5" class="empty">No devices match the current filter.</td></tr>'; return; }
+  devices.forEach((d,i)=>{
+    const label = deviceLabel(d.device);
+    const sub = label !== d.device ? `<div class="muted" style="font-size:11px;">${esc(d.device)}</div>` : '';
+    const tag = lookupFor(d.device) && lookupFor(d.device).email ? '' : ' <span class="tag">unmapped</span>';
+    const tr=document.createElement('tr'); tr.className='click';
+    tr.innerHTML=`<td class="rank">${i+1}</td><td>${esc(label)}${tag}${sub}</td>
+      <td class="num bar-wifi">${fmt(d.up)}</td>
+      <td class="num bar-cell">${fmt(d.down)}</td>
+      <td class="num">${fmt(d.total)}</td>`;
+    tr.onclick=()=>{ drillDevice(d.device);
+      document.querySelectorAll('#devTable tr.sel').forEach(t=>t.classList.remove('sel'));
+      tr.classList.add('sel'); };
+    tb.appendChild(tr);
+  });
+}
+
+function renderDevChart(devices){
+  if(devChart) devChart.destroy();
+  devChart=new Chart($('devChart'),{
+    type:'bar',
+    data:{labels:devices.map(d=>shortDev(deviceLabel(d.device))),datasets:[
+      {label:'Upload',data:devices.map(d=>d.up/1048576),backgroundColor:'#4cc3ff'},
+      {label:'Download',data:devices.map(d=>d.down/1048576),backgroundColor:'#ffb648'}]},
+    options:{responsive:true,
+      plugins:{legend:{labels:{color:'#8597b0'}},tooltip:{callbacks:{
+        label:c=>`${c.dataset.label}: ${c.parsed.y.toFixed(2)} GB`}}},
+      scales:{x:{stacked:true,ticks:{color:'#8597b0',maxRotation:60,minRotation:30},grid:{color:'#1c2840'}},
+              y:{stacked:true,ticks:{color:'#8597b0'},grid:{color:'#1c2840'},title:{display:true,text:'GB',color:'#5d6f8a'}}},
+      onClick:(e,el)=>{ if(el.length) drillDevice(devices[el[0].index].device); }}
+  });
+}
+
+// drill: apps used by a device
+function drillDevice(device){
+  const rows = activeRows().filter(r=>r.device===device);
+  const byApp={};
+  rows.forEach(r=>{
+    const a=byApp[r.app]||(byApp[r.app]={up:0,down:0,total:0});
+    a.up+=r.up; a.down+=r.down; a.total+=r.vol;
+  });
+  const apps=Object.entries(byApp).map(([app,v])=>({app,...v})).sort((x,y)=>y.total-x.total);
+
+  $('devDrillName').textContent = deviceLabel(device);
+  const tb=$('devDrillTable').querySelector('tbody'); tb.innerHTML='';
+  apps.forEach((a,i)=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td class="rank">${i+1}</td><td><span class="appname">${esc(a.app)}</span></td>
+      <td class="num bar-wifi">${fmt(a.up)}</td>
+      <td class="num bar-cell">${fmt(a.down)}</td>
+      <td class="num">${fmt(a.total)}</td>`;
+    tb.appendChild(tr);
+  });
+
+  if(devDrillChart) devDrillChart.destroy();
+  const top=apps.slice(0,15);
+  devDrillChart=new Chart($('devDrillChart'),{
+    type:'bar',
+    data:{labels:top.map(a=>a.app),datasets:[
+      {label:'Upload',data:top.map(a=>a.up/1048576),backgroundColor:'#4cc3ff'},
+      {label:'Download',data:top.map(a=>a.down/1048576),backgroundColor:'#ffb648'}]},
+    options:{responsive:true,indexAxis:'y',
+      plugins:{legend:{labels:{color:'#8597b0'}},tooltip:{callbacks:{
+        label:c=>`${c.dataset.label}: ${c.parsed.x.toFixed(2)} GB`}}},
+      scales:{x:{stacked:true,ticks:{color:'#8597b0'},grid:{color:'#1c2840'},title:{display:true,text:'GB',color:'#5d6f8a'}},
+              y:{stacked:true,ticks:{color:'#8597b0',font:{size:10}},grid:{color:'#1c2840'}}}}
+  });
+
+  $('devDrillCard').classList.remove('hidden');
+  $('devDrillCard').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+// ---------- per-group summary cards ----------
+function renderGroupCards(rows){
+  const byGrp={};
+  rows.forEach(r=>{
+    const grp = deviceGroup(r.device);
+    const g=byGrp[grp]||(byGrp[grp]={total:0,up:0,down:0,devs:new Set(),apps:{}});
+    g.total+=r.vol; g.up+=r.up; g.down+=r.down; g.devs.add(r.device);
+    g.apps[r.app]=(g.apps[r.app]||0)+r.vol;
+  });
+  const groups=Object.entries(byGrp).map(([group,v])=>({group,...v})).sort((a,b)=>b.total-a.total);
+  $('grpSumCount').textContent=`${groups.length} group(s)`;
+  const wrap=$('groupCards'); wrap.innerHTML='';
+  if(!groups.length){ wrap.innerHTML='<div class="muted">No groups in current selection.</div>'; return; }
+  groups.forEach(g=>{
+    const topApp=Object.entries(g.apps).sort((a,b)=>b[1]-a[1])[0];
+    const card=document.createElement('div'); card.className='gcard';
+    card.innerHTML=`<h3 title="${esc(g.group)}">${esc(g.group)}</h3>
+      <div class="gtot">${fmt(g.total)}</div>
+      <div class="grow"><span>${g.devs.size} device(s)</span><span>↑${fmt(g.up)} ↓${fmt(g.down)}</span></div>
+      <div class="grow"><span>Top app</span><span title="${topApp?esc(topApp[0]):''}">${topApp?esc(topApp[0]):'—'}</span></div>`;
+    wrap.appendChild(card);
+  });
+}
+
+// ---------- tab switching ----------
+$('tabs').querySelectorAll('button').forEach(b=>{
+  b.onclick=()=>{
+    $('tabs').querySelectorAll('button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');
+    currentTab=b.dataset.tab;
+    $('tab-apps').classList.toggle('hidden', currentTab!=='apps');
+    $('tab-devices').classList.toggle('hidden', currentTab!=='devices');
+  };
+});
+
+// ---------- drilldown: devices using an app ----------
+function drillApp(app){
+  selectedApp=app;
+  const rows = activeRows().filter(r=>r.app===app);
+  const byDev={};
+  rows.forEach(r=>{
+    const d=byDev[r.device]||(byDev[r.device]={up:0,down:0,total:0});
+    d.up+=r.up; d.down+=r.down; d.total+=r.vol;
+  });
+  const devs=Object.entries(byDev).map(([device,v])=>({device,...v})).sort((a,b)=>b.total-a.total);
+
+  $('drillApp').textContent=app;
+  const tb=$('drillTable').querySelector('tbody'); tb.innerHTML='';
+  devs.forEach((d,i)=>{
+    const label = deviceLabel(d.device);
+    const sub = label !== d.device ? `<div class="muted" style="font-size:11px;">${esc(d.device)}</div>` : '';
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td class="rank">${i+1}</td><td>${esc(label)}${sub}</td>
+      <td class="num bar-wifi">${fmt(d.up)}</td>
+      <td class="num bar-cell">${fmt(d.down)}</td>
+      <td class="num">${fmt(d.total)}</td>`;
+    tb.appendChild(tr);
+  });
+
+  if(drillChart) drillChart.destroy();
+  const top=devs.slice(0,15);
+  drillChart=new Chart($('drillChart'),{
+    type:'bar',
+    data:{labels:top.map(d=>shortDev(deviceLabel(d.device))),datasets:[
+      {label:'Upload',data:top.map(d=>d.up/1048576),backgroundColor:'#4cc3ff'},
+      {label:'Download',data:top.map(d=>d.down/1048576),backgroundColor:'#ffb648'}]},
+    options:{responsive:true,indexAxis:'y',
+      plugins:{legend:{labels:{color:'#8597b0'}},tooltip:{callbacks:{
+        label:c=>`${c.dataset.label}: ${c.parsed.x.toFixed(2)} GB`}}},
+      scales:{x:{stacked:true,ticks:{color:'#8597b0'},grid:{color:'#1c2840'},title:{display:true,text:'GB',color:'#5d6f8a'}},
+              y:{stacked:true,ticks:{color:'#8597b0',font:{size:10}},grid:{color:'#1c2840'}}}}
+  });
+
+  $('drillCard').classList.remove('hidden');
+  $('drillCard').scrollIntoView({behavior:'smooth',block:'start'});
+}
+</script>
 </body>
 </html>
