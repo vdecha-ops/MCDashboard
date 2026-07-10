@@ -18,10 +18,11 @@ label{display:block;font-size:12px;color:var(--muted);margin-bottom:7px;text-tra
 input,select{width:100%;background:#0a1220;border:1px solid var(--line);border-radius:9px;
   padding:10px 12px;color:var(--ink);font-size:14px;}
 input[type=date]::-webkit-calendar-picker-indicator{filter:invert(.7);}
-.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px;align-items:end;}
+.controls{display:grid;grid-template-columns:132px 132px 220px 1fr;gap:14px;align-items:end;}
 .seg{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;}
-.seg button{flex:1;background:#0a1220;border:none;color:var(--muted);padding:10px;font-size:13px;cursor:pointer;font-weight:600;}
+.seg button{flex:1;background:#0a1220;border:none;color:var(--muted);padding:10px 8px;font-size:13px;cursor:pointer;font-weight:600;white-space:nowrap;}
 .seg button.on{background:var(--accent);color:#0a1220;}
+#timeSeg button{font-size:12px;padding:10px 6px;}
 .groupbox{max-height:120px;overflow:auto;border:1px solid var(--line);border-radius:9px;padding:8px 10px;background:#0a1220;}
 .groupbox label{display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;
   font-size:13px;color:var(--ink);margin:5px 0;cursor:pointer;}
