@@ -412,9 +412,109 @@ function apply(){
   renderDevTable(devices);
   renderDevChart(devices);
   renderGroupCards(rows);
+
+  // Best-effort live Play Store names; re-render if any resolve.
+  enrichNames(apps.map(a=>a.app)).then(changed=>{
+    if(!changed) return;
+    renderAppTable(apps);
+    renderAppChart(apps);
+    renderGroupCards(rows);
+  });
 }
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+
+// ---------- package name -> friendly app name ----------
+// Curated fallback for common packages so a name shows instantly without
+// waiting on (or needing) a network round-trip.
+const APP_NAMES = {
+  'com.ais.mimo.eservice':'myAIS',
+  'com.android.chrome':'Chrome',
+  'com.android.intentresolver':'Android System (Intent Resolver)',
+  'com.android.providers.downloads.ui':'Download Manager',
+  'com.android.vending':'Google Play Store',
+  'com.aura.oobe.samsung.gl':'Samsung Setup (Aura)',
+  'com.azure.authenticator':'Microsoft Authenticator',
+  'com.google.android.apps.maps':'Google Maps',
+  'com.google.android.apps.messaging':'Google Messages',
+  'com.google.android.apps.photos':'Google Photos',
+  'com.google.android.apps.tachyon':'Google Meet',
+  'com.google.android.apps.work.clouddpc':'Android Device Policy',
+  'com.google.android.as':'Android System Intelligence',
+  'com.google.android.configupdater':'Google Config Updater',
+  'com.google.android.ext.services':'Android Services',
+  'com.google.android.gm':'Gmail',
+  'com.google.android.gms':'Google Play Services',
+  'com.google.android.gms.location.history':'Google Location History',
+  'com.google.android.googlequicksearchbox':'Google',
+  'com.google.android.syncadapters.calendar':'Google Calendar Sync',
+  'com.google.android.tts':'Google Text-to-Speech',
+  'com.google.android.webview':'Android System WebView',
+  'com.google.android.youtube':'YouTube',
+  'com.google.ar.core':'Google Play Services for AR',
+  'com.hiya.star':'Hiya (Caller ID)',
+  'com.jeyluta.timestampcamerafree':'Timestamp Camera Free',
+  'com.microsoft.msapps':'Microsoft Apps',
+  'com.microsoft.office.officehubrow':'Microsoft 365 (Office)',
+  'com.microsoft.office.outlook':'Microsoft Outlook',
+  'com.microsoft.skydrive':'Microsoft OneDrive',
+  'com.microsoft.teams':'Microsoft Teams',
+  'com.osp.app.signin':'Samsung Account',
+  'com.samsung.android.app.contacts':'Samsung Contacts',
+  'com.samsung.android.app.sharelive':'Samsung Quick Share',
+  'com.samsung.android.app.smartcapture':'Samsung Smart Capture',
+  'com.samsung.android.calendar':'Samsung Calendar',
+  'com.samsung.android.game.gametools':'Samsung Game Tools',
+  'com.samsung.android.honeyboard':'Samsung Keyboard',
+  'com.samsung.android.kgclient':'Samsung Knox Guard',
+  'com.samsung.android.mdx.kit':'Samsung Continuity',
+  'com.samsung.android.samsungpass':'Samsung Pass',
+  'com.samsung.android.scloud':'Samsung Cloud',
+  'com.samsung.android.simagent':'Samsung SIM Agent',
+  'com.samsung.android.smartsuggestions':'Samsung Smart Suggestions',
+  'com.sec.android.app.SecSetupWizard':'Samsung Setup Wizard',
+  'com.sec.android.app.billing':'Samsung Billing',
+  'com.sec.android.app.camera':'Samsung Camera',
+  'com.sec.android.app.samsungapps':'Galaxy Store',
+  'com.sec.android.daemonapp':'Samsung Weather',
+  'com.sec.android.gallery3d':'Samsung Gallery',
+  'com.touchtype.swiftkey':'Microsoft SwiftKey',
+  'com.whatsapp':'WhatsApp',
+  'net.soti.mobicontrol.androidwork':'SOTI MobiControl',
+  'net.soti.xsight':'SOTI XSight',
+  '(unknown)':'(unknown)',
+};
+// Live Play Store lookups cached here (best-effort; often blocked by CORS
+// when fetched from the browser, in which case the fallback name is kept).
+const APP_NAME_CACHE = {};
+function appName(pkg){
+  if(APP_NAMES[pkg]) return APP_NAMES[pkg];
+  if(APP_NAME_CACHE[pkg]) return APP_NAME_CACHE[pkg];
+  const generic = new Set(['android','app','apps','client','service','services','mobile','main']);
+  const parts = String(pkg).split('.').filter(Boolean);
+  let seg = parts[parts.length-1] || pkg;
+  if(generic.has(seg.toLowerCase()) && parts.length>1) seg = parts[parts.length-2];
+  return seg.replace(/[_-]/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+}
+// Best-effort: try to resolve real names from the Play Store listing title
+// at runtime for packages not already in APP_NAMES. Silently keeps the
+// derived fallback name if the request fails or is blocked by CORS.
+async function enrichNames(pkgs){
+  const todo = pkgs.filter(p=>p && p!=='(unknown)' && !APP_NAMES[p] && !APP_NAME_CACHE[p]);
+  if(!todo.length) return false;
+  const results = await Promise.all(todo.map(async p=>{
+    try{
+      const url='https://play.google.com/store/apps/details?id='+encodeURIComponent(p)+'&hl=en';
+      const res=await fetch(url);
+      if(!res.ok) return false;
+      const html=await res.text();
+      const m=html.match(/<title[^>]*>([^<]+?)(?:\s*[-–]\s*Apps on Google Play)?<\/title>/i);
+      if(m&&m[1]&&!/Google Play/i.test(m[1])){ APP_NAME_CACHE[p]=m[1].trim(); return true; }
+      return false;
+    }catch(e){ return false; /* CORS or offline: keep fallback name */ }
+  }));
+  return results.some(Boolean);
+}
 
 // ---------- top apps tab ----------
 function renderAppTable(apps){
@@ -422,7 +522,7 @@ function renderAppTable(apps){
   if (!apps.length) { tb.innerHTML = '<tr><td colspan="5" class="empty">No applications match the current filter.</td></tr>'; return; }
   apps.forEach((a,i)=>{
     const tr=document.createElement('tr'); tr.className='click';
-    tr.innerHTML=`<td class="rank">${i+1}</td><td><span class="appname">${esc(a.app)}</span></td>
+    tr.innerHTML=`<td class="rank">${i+1}</td><td><span class="appname">${esc(appName(a.app))}</span><div class="muted" style="font-size:11px;">${esc(a.app)}</div></td>
       <td class="num bar-wifi">${fmt(a.up)}</td>
       <td class="num bar-cell">${fmt(a.down)}</td>
       <td class="num">${fmt(a.total)}</td>`;
@@ -437,7 +537,7 @@ function renderAppChart(apps){
   if(appChart) appChart.destroy();
   appChart=new Chart($('appChart'),{
     type:'bar',
-    data:{labels:apps.map(a=>a.app),datasets:[
+    data:{labels:apps.map(a=>appName(a.app)),datasets:[
       {label:'Upload',data:apps.map(a=>a.up/1048576),backgroundColor:'#4cc3ff'},
       {label:'Download',data:apps.map(a=>a.down/1048576),backgroundColor:'#ffb648'}]},
     options:{responsive:true,
@@ -501,7 +601,7 @@ function drillDevice(device){
   const tb=$('devDrillTable').querySelector('tbody'); tb.innerHTML='';
   apps.forEach((a,i)=>{
     const tr=document.createElement('tr');
-    tr.innerHTML=`<td class="rank">${i+1}</td><td><span class="appname">${esc(a.app)}</span></td>
+    tr.innerHTML=`<td class="rank">${i+1}</td><td><span class="appname">${esc(appName(a.app))}</span><div class="muted" style="font-size:11px;">${esc(a.app)}</div></td>
       <td class="num bar-wifi">${fmt(a.up)}</td>
       <td class="num bar-cell">${fmt(a.down)}</td>
       <td class="num">${fmt(a.total)}</td>`;
@@ -512,7 +612,7 @@ function drillDevice(device){
   const top=apps.slice(0,15);
   devDrillChart=new Chart($('devDrillChart'),{
     type:'bar',
-    data:{labels:top.map(a=>a.app),datasets:[
+    data:{labels:top.map(a=>appName(a.app)),datasets:[
       {label:'Upload',data:top.map(a=>a.up/1048576),backgroundColor:'#4cc3ff'},
       {label:'Download',data:top.map(a=>a.down/1048576),backgroundColor:'#ffb648'}]},
     options:{responsive:true,indexAxis:'y',
@@ -524,6 +624,13 @@ function drillDevice(device){
 
   $('devDrillCard').classList.remove('hidden');
   $('devDrillCard').scrollIntoView({behavior:'smooth',block:'start'});
+
+  enrichNames(apps.map(a=>a.app)).then(changed=>{
+    if(!changed) return;
+    document.querySelectorAll('#devDrillTable .appname').forEach((el,i)=>{ if(apps[i]) el.textContent=appName(apps[i].app); });
+    devDrillChart.data.labels = top.map(a=>appName(a.app));
+    devDrillChart.update();
+  });
 }
 
 // ---------- per-group summary cards ----------
@@ -545,7 +652,7 @@ function renderGroupCards(rows){
     card.innerHTML=`<h3 title="${esc(g.group)}">${esc(trimGroupName(g.group))}</h3>
       <div class="gtot">${fmt(g.total)}</div>
       <div class="grow"><span>${g.devs.size} device(s)</span><span>↑${fmt(g.up)} ↓${fmt(g.down)}</span></div>
-      <div class="grow"><span>Top app</span><span title="${topApp?esc(topApp[0]):''}">${topApp?esc(topApp[0]):'—'}</span></div>`;
+      <div class="grow"><span>Top app</span><span title="${topApp?esc(topApp[0]):''}">${topApp?esc(appName(topApp[0])):'—'}</span></div>`;
     wrap.appendChild(card);
   });
 }
@@ -572,7 +679,8 @@ function drillApp(app){
   });
   const devs=Object.entries(byDev).map(([device,v])=>({device,...v})).sort((a,b)=>b.total-a.total);
 
-  $('drillApp').textContent=app;
+  $('drillApp').textContent=appName(app);
+  $('drillApp').title=app;
   const tb=$('drillTable').querySelector('tbody'); tb.innerHTML='';
   devs.forEach((d,i)=>{
     const label = deviceLabel(d.device);
@@ -601,6 +709,8 @@ function drillApp(app){
 
   $('drillCard').classList.remove('hidden');
   $('drillCard').scrollIntoView({behavior:'smooth',block:'start'});
+
+  enrichNames([app]).then(changed=>{ if(changed) $('drillApp').textContent=appName(app); });
 }
 </script>
 </body>
