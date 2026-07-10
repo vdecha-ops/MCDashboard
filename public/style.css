@@ -112,3 +112,18 @@ form label:first-of-type{margin-top:0;}
   border-radius:50%; font-size:12px; font-weight:800;
 }
 form label{margin-top:16px;}
+
+/* Post-login tool picker (menu.ejs). */
+.menucards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;margin-top:8px;}
+.menucard{
+  display:block;background:linear-gradient(180deg,var(--panel),var(--panel2));
+  border:1px solid var(--line);border-radius:var(--radius);padding:28px;
+  text-decoration:none;color:var(--ink);
+  transition:border-color .15s ease,transform .1s ease,box-shadow .15s ease;
+}
+.menucard:hover{border-color:var(--accent);box-shadow:0 4px 20px rgba(124,140,255,.2);transform:translateY(-2px);}
+.menucard:active{transform:translateY(0);}
+.menucard-icon{font-size:32px;margin-bottom:14px;}
+.menucard h2{font-size:19px;margin-bottom:8px;}
+.menucard p{color:var(--muted);font-size:13.5px;line-height:1.5;margin-bottom:16px;}
+.menucard .back{font-weight:600;}
