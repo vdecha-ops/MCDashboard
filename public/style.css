@@ -94,7 +94,20 @@ canvas{margin-top:6px;}
 form label:first-of-type{margin-top:0;}
 
 /* Group summary cards double as the group filter -- click to toggle. */
-.gcard{cursor:pointer;transition:border-color .15s ease,background .15s ease;}
+.gcard{cursor:pointer;position:relative;transition:border-color .15s ease,background .15s ease,box-shadow .15s ease,transform .1s ease;}
 .gcard:hover{border-color:var(--accent);}
-.gcard.sel{border-color:var(--accent);background:#152036;box-shadow:0 0 0 1px var(--accent) inset;}
+.gcard:active{transform:scale(.98);}
+.gcard.sel{
+  border-color:var(--accent);
+  background:linear-gradient(180deg,#1a2748,#152036);
+  box-shadow:0 0 0 2px var(--accent), 0 4px 16px rgba(124,140,255,.35);
+}
+.gcard.sel h3{color:var(--accent);}
+.gcard.sel::after{
+  content:"\2713";
+  position:absolute; top:10px; right:12px;
+  width:20px; height:20px; line-height:20px; text-align:center;
+  background:var(--accent); color:#0a1220;
+  border-radius:50%; font-size:12px; font-weight:800;
+}
 form label{margin-top:16px;}
