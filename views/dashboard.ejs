@@ -187,6 +187,15 @@ function deviceGroup(deviceName) {
   return deviceName.includes(':') ? deviceName.split(':')[0].trim() : '(ungrouped)';
 }
 
+// Display-only: strip the common organization root off a MobiControl group
+// path so lists show just the meaningful subgroup name. Filtering still
+// matches on the full untrimmed path -- only the label shown to the user
+// is shortened.
+const GROUP_PREFIX_TO_TRIM = '\\\\My Company\\1.Production\\1.1 Device Group\\';
+function trimGroupName(g) {
+  return g.startsWith(GROUP_PREFIX_TO_TRIM) ? g.slice(GROUP_PREFIX_TO_TRIM.length) : g;
+}
+
 let netFilter = 'all';
 let selectedGroups = null;   // null = all groups
 let selectedApp = null;
@@ -336,7 +345,7 @@ function buildGroupSelect(groups){
   const pop = $('grpPop');
   pop.innerHTML =
     `<div class="msel-actions"><a id="grpAll">Select all</a><a id="grpNone">Clear</a></div>` +
-    groups.map(g=>`<label><input type="checkbox" class="grpChk" value="${g.replace(/"/g,'&quot;')}" checked> ${g}</label>`).join('');
+    groups.map(g=>`<label><input type="checkbox" class="grpChk" value="${g.replace(/"/g,'&quot;')}" checked> ${esc(trimGroupName(g))}</label>`).join('');
   pop.querySelectorAll('.grpChk').forEach(c=>{
     c.onchange=()=>{ c.checked ? selectedGroups.add(c.value) : selectedGroups.delete(c.value); updateGrpLabel(groups); };
   });
@@ -533,7 +542,7 @@ function renderGroupCards(rows){
   groups.forEach(g=>{
     const topApp=Object.entries(g.apps).sort((a,b)=>b[1]-a[1])[0];
     const card=document.createElement('div'); card.className='gcard';
-    card.innerHTML=`<h3 title="${esc(g.group)}">${esc(g.group)}</h3>
+    card.innerHTML=`<h3 title="${esc(g.group)}">${esc(trimGroupName(g.group))}</h3>
       <div class="gtot">${fmt(g.total)}</div>
       <div class="grow"><span>${g.devs.size} device(s)</span><span>↑${fmt(g.up)} ↓${fmt(g.down)}</span></div>
       <div class="grow"><span>Top app</span><span title="${topApp?esc(topApp[0]):''}">${topApp?esc(topApp[0]):'—'}</span></div>`;
