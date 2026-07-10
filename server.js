@@ -182,6 +182,45 @@ function normalizeDeviceForLookup(d) {
   };
 }
 
+// Extended shape used by /api/device-status (the "Device Status with AIS
+// Usage" page). CellularCarrier / CellularSignalStrength / CellularTechnology
+// / InRoaming were confirmed present on this MobiControl server's device
+// objects during an earlier live API walkthrough. The remaining status
+// fields (connection/last-seen, battery, model, OS) are not confirmed for
+// this deployment -- they're looked up defensively across the common
+// MobiControl field-name variants via pick(), and simply render as "—" on
+// the page if none of the candidate names exist.
+function normalizeDeviceForStatus(d) {
+  if (typeof d !== 'object' || d === null) return null;
+  const name = pick(d, DEVICE_NAME_FIELDS);
+  if (!name) return null;
+
+  const lastSeenRaw = pick(d, [
+    'LastConnectionTime', 'lastConnectionTime',
+    'LastConnectionUtc', 'lastConnectionUtc',
+    'LastCheckInTime', 'lastCheckInTime',
+    'LastSeen', 'lastSeen',
+    'LastCommunicationTime', 'lastCommunicationTime',
+  ]);
+  const connectedRaw = pick(d, ['IsConnected', 'isConnected', 'Connected', 'connected']);
+
+  return {
+    name,
+    email: extractCustomAttributeEmail(d),
+    path: pick(d, ['Path', 'path', 'FullPath', 'fullPath']),
+    model: pick(d, ['Model', 'model', 'DeviceModel', 'deviceModel']),
+    os: pick(d, ['OSVersion', 'osVersion', 'OperatingSystem', 'operatingSystem', 'Platform', 'platform']),
+    battery: pick(d, ['BatteryLevel', 'batteryLevel', 'Battery', 'battery']),
+    connected: connectedRaw === true || connectedRaw === 'true' || connectedRaw === 1 ? true
+      : (connectedRaw === false || connectedRaw === 'false' || connectedRaw === 0 ? false : null),
+    lastSeen: lastSeenRaw || null,
+    carrier: pick(d, ['CellularCarrier', 'cellularCarrier']),
+    signal: pick(d, ['CellularSignalStrength', 'cellularSignalStrength']),
+    technology: pick(d, ['CellularTechnology', 'cellularTechnology']),
+    roaming: pick(d, ['InRoaming', 'inRoaming']),
+  };
+}
+
 function httpErrorMessage(status) {
   if (status === 400 || status === 401) return 'Invalid username, password, or API client credentials.';
   if (status === 403) return 'This account is not authorized to call the MobiControl API.';
@@ -195,7 +234,7 @@ function requireLogin(req, res, next) {
 }
 
 app.get('/', (req, res) => {
-  if (req.session.accessToken) return res.redirect('/dashboard');
+  if (req.session.accessToken) return res.redirect('/menu');
   res.render('index', { error: null, serverUrl: config.MC_SERVER_URL });
 });
 
@@ -214,15 +253,24 @@ app.post('/login', async (req, res) => {
     const tokenData = await getAccessToken(username, password);
     req.session.accessToken = tokenData.access_token;
     req.session.username = username;
-    res.redirect('/dashboard');
+    res.redirect('/menu');
   } catch (err) {
     const msg = err.status ? httpErrorMessage(err.status) : `Could not reach MobiControl server: ${err.message}`;
     res.render('index', { error: msg, serverUrl: config.MC_SERVER_URL });
   }
 });
 
+// Landing page after login: card-based menu picking which tool to open.
+app.get('/menu', requireLogin, (req, res) => {
+  res.render('menu', { username: req.session.username });
+});
+
 app.get('/dashboard', requireLogin, (req, res) => {
   res.render('dashboard', { username: req.session.username });
+});
+
+app.get('/device-status', requireLogin, (req, res) => {
+  res.render('device-status', { username: req.session.username });
 });
 
 // JSON lookup of { name, email, path } per device, fetched by the dashboard
@@ -242,6 +290,22 @@ app.get('/api/device-lookup', requireLogin, async (req, res) => {
   }
 });
 
+// JSON lookup of extended per-device status (email/path/model/OS/battery/
+// connection/cellular fields), used by the Device Status page. Same
+// once-per-page-load fetch pattern as /api/device-lookup.
+app.get('/api/device-status', requireLogin, async (req, res) => {
+  try {
+    const rawDevices = await fetchAllDevices(req.session.accessToken);
+    const devices = rawDevices.map(normalizeDeviceForStatus).filter(Boolean);
+    res.json({ devices });
+  } catch (err) {
+    if (err.status === 401) {
+      return res.status(401).json({ error: 'Session expired. Please sign in again.' });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/logout', (req, res) => {
   req.session.destroy(() => res.redirect('/'));
 });
@@ -250,4 +314,11 @@ app.listen(config.PORT, () => {
   console.log(`Server running on port ${config.PORT}`);
 });
 
-module.exports = { apiBase, normalizeDeviceForLookup, extractCustomAttributeEmail, httpErrorMessage, pick };
+module.exports = {
+  apiBase,
+  normalizeDeviceForLookup,
+  normalizeDeviceForStatus,
+  extractCustomAttributeEmail,
+  httpErrorMessage,
+  pick,
+};
