@@ -61,6 +61,14 @@
           </div>
         </div>
         <div>
+          <label>Time</label>
+          <div class="seg" id="timeSeg">
+            <button type="button" data-time="all" class="on">All Time</button>
+            <button type="button" data-time="day">Day (8:30-17:30)</button>
+            <button type="button" data-time="night">Night (17:31-8:29)</button>
+          </div>
+        </div>
+        <div>
           <label>Show top</label>
           <select id="topN"><option>5</option><option selected>10</option><option>20</option><option value="999999">All</option></select>
         </div>
@@ -197,6 +205,7 @@ function trimGroupName(g) {
 }
 
 let netFilter = 'all';
+let timeFilter = 'all';           // 'all' | 'day' (8:30-17:30) | 'night' (17:31-8:29)
 let selectedGroups = new Set();   // empty = all groups; populated by clicking group cards
 let selectedApp = null;
 let appChart=null, drillChart=null;
@@ -273,6 +282,11 @@ function parseDate(v){
 }
 function isWifi(t){ return /wi-?fi/i.test(t||''); }
 function isCell(t){ return /cell|mobile|data|3g|4g|5g|lte/i.test(t||''); }
+// Day = 08:30-17:30 inclusive; Night = everything else (wraps past midnight).
+function isDayTime(d){
+  const mins = d.getHours()*60 + d.getMinutes();
+  return mins>=510 && mins<=1050;
+}
 
 function ingest(data){
   if(!data.length) throw new Error('The file has no rows.');
@@ -338,6 +352,10 @@ $('netSeg').querySelectorAll('button').forEach(b=>{
   b.onclick=()=>{ $('netSeg').querySelectorAll('button').forEach(x=>x.classList.remove('on'));
     b.classList.add('on'); netFilter=b.dataset.net; };
 });
+$('timeSeg').querySelectorAll('button').forEach(b=>{
+  b.onclick=()=>{ $('timeSeg').querySelectorAll('button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); timeFilter=b.dataset.time; };
+});
 
 $('applyBtn').onclick = apply;
 $('drillBack').onclick = (e) => { e.preventDefault(); selectedApp=null; $('drillCard').classList.add('hidden');
@@ -354,7 +372,8 @@ function dateNetRows(){
   const to   = new Date($('to').value+'T23:59:59');
   return ROWS.filter(r =>
     r.date>=from && r.date<=to &&
-    (netFilter==='all' || (netFilter==='wifi'?isWifi(r.type):isCell(r.type)))
+    (netFilter==='all' || (netFilter==='wifi'?isWifi(r.type):isCell(r.type))) &&
+    (timeFilter==='all' || (timeFilter==='day'?isDayTime(r.date):!isDayTime(r.date)))
   );
 }
 // Date + network + selected group(s) -- used for the Top Apps/Top Devices
@@ -392,8 +411,9 @@ function apply(){
   const grpTxt = selectedGroups.size>0
     ? ' · ' + selectedGroups.size + (selectedGroups.size===1?' group':' groups') + ' selected'
     : ' · all groups';
+  const timeTxt = timeFilter==='all' ? 'all times' : (timeFilter==='day' ? 'day (8:30-17:30)' : 'night (17:31-8:29)');
   $('activeFilter').textContent =
-    `${$('from').value} → ${$('to').value} · ${netFilter==='all'?'all networks':netFilter}${grpTxt}`;
+    `${$('from').value} → ${$('to').value} · ${netFilter==='all'?'all networks':netFilter} · ${timeTxt}${grpTxt}`;
   $('appCount').textContent = `${apps.length} shown · ${rows.length.toLocaleString()} records`;
   $('devCount').textContent = `${devices.length} shown · ${rows.length.toLocaleString()} records`;
   $('grpClearSel').classList.toggle('hidden', selectedGroups.size===0);
