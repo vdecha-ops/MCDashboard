@@ -92,4 +92,9 @@ canvas{margin-top:6px;}
   background:#1b2740;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.4px;}
 .empty{color:var(--muted);font-size:13px;padding:16px 0;text-align:center;}
 form label:first-of-type{margin-top:0;}
+
+/* Group summary cards double as the group filter -- click to toggle. */
+.gcard{cursor:pointer;transition:border-color .15s ease,background .15s ease;}
+.gcard:hover{border-color:var(--accent);}
+.gcard.sel{border-color:var(--accent);background:#152036;box-shadow:0 0 0 1px var(--accent) inset;}
 form label{margin-top:16px;}
