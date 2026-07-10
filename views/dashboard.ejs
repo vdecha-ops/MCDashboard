@@ -64,13 +64,6 @@
           <label>Show top</label>
           <select id="topN"><option>5</option><option selected>10</option><option>20</option><option value="999999">All</option></select>
         </div>
-        <div>
-          <label>Device groups</label>
-          <div class="msel" id="grpSel">
-            <button type="button" id="grpToggle" class="mselbtn">All groups</button>
-            <div class="mselpop hidden" id="grpPop"></div>
-          </div>
-        </div>
       </div>
       <div style="margin-top:16px;display:flex;gap:10px;align-items:center;">
         <button type="button" class="primary" id="applyBtn">Apply</button>
@@ -79,7 +72,14 @@
     </div>
 
     <div class="card" id="groupSummaryCard">
-      <div class="panelhead"><h2>Per-group summary</h2><span class="pill" id="grpSumCount"></span></div>
+      <div class="panelhead">
+        <h2>Per-group summary</h2>
+        <span style="display:flex;gap:10px;align-items:center;">
+          <a href="#" class="back hidden" id="grpClearSel">Show all groups</a>
+          <span class="pill" id="grpSumCount"></span>
+        </span>
+      </div>
+      <div class="hint" style="margin:0 0 12px;">Click a group card to filter the dashboard to that group. Click again to deselect.</div>
       <div class="groupcards" id="groupCards"></div>
     </div>
 
@@ -197,7 +197,7 @@ function trimGroupName(g) {
 }
 
 let netFilter = 'all';
-let selectedGroups = null;   // null = all groups
+let selectedGroups = new Set();   // empty = all groups; populated by clicking group cards
 let selectedApp = null;
 let appChart=null, drillChart=null;
 let devChart=null, devDrillChart=null;
@@ -322,7 +322,7 @@ function buildControls(){
   $('to').value   = iso(max); $('to').min   = iso(min); $('to').max   = iso(max);
 
   const groups = [...new Set(ROWS.map(r=>deviceGroup(r.device)))].sort();
-  buildGroupSelect(groups);
+  selectedGroups = new Set();   // reset group selection on each new file
 
   const totalKb = ROWS.reduce((s,r)=>s+r.vol,0);
   $('summary').innerHTML = `
@@ -339,49 +339,37 @@ $('netSeg').querySelectorAll('button').forEach(b=>{
     b.classList.add('on'); netFilter=b.dataset.net; };
 });
 
-// ---------- group multi-select ----------
-function buildGroupSelect(groups){
-  selectedGroups = new Set(groups);   // default: all selected
-  const pop = $('grpPop');
-  pop.innerHTML =
-    `<div class="msel-actions"><a id="grpAll">Select all</a><a id="grpNone">Clear</a></div>` +
-    groups.map(g=>`<label><input type="checkbox" class="grpChk" value="${g.replace(/"/g,'&quot;')}" checked> ${esc(trimGroupName(g))}</label>`).join('');
-  pop.querySelectorAll('.grpChk').forEach(c=>{
-    c.onchange=()=>{ c.checked ? selectedGroups.add(c.value) : selectedGroups.delete(c.value); updateGrpLabel(groups); };
-  });
-  pop.querySelector('#grpAll').onclick=()=>{ pop.querySelectorAll('.grpChk').forEach(c=>{c.checked=true;selectedGroups.add(c.value);}); updateGrpLabel(groups); };
-  pop.querySelector('#grpNone').onclick=()=>{ pop.querySelectorAll('.grpChk').forEach(c=>{c.checked=false;}); selectedGroups.clear(); updateGrpLabel(groups); };
-  updateGrpLabel(groups);
-}
-function updateGrpLabel(groups){
-  const n=selectedGroups.size, tot=groups.length;
-  $('grpToggle').textContent = (n===0)?'No groups' : (n===tot)?'All groups' : `${n} of ${tot} groups`;
-}
-$('grpToggle').onclick=(e)=>{ e.stopPropagation(); $('grpPop').classList.toggle('hidden'); };
-document.addEventListener('click',(e)=>{ if(!$('grpSel').contains(e.target)) $('grpPop').classList.add('hidden'); });
-
 $('applyBtn').onclick = apply;
 $('drillBack').onclick = (e) => { e.preventDefault(); selectedApp=null; $('drillCard').classList.add('hidden');
   document.querySelectorAll('#appTable tr.sel').forEach(t=>t.classList.remove('sel')); };
 $('devDrillBack').onclick=(e)=>{ e.preventDefault(); $('devDrillCard').classList.add('hidden');
   document.querySelectorAll('#devTable tr.sel').forEach(t=>t.classList.remove('sel')); };
+$('grpClearSel').onclick=(e)=>{ e.preventDefault(); selectedGroups.clear(); apply(); };
 
 // ---------- filtering ----------
-function activeRows(){
+// Date + network only -- used to build the always-visible per-group summary
+// cards, so every group stays clickable even while one is selected.
+function dateNetRows(){
   const from = new Date($('from').value+'T00:00:00');
   const to   = new Date($('to').value+'T23:59:59');
-  const grpOn = selectedGroups && selectedGroups.size>0;
   return ROWS.filter(r =>
     r.date>=from && r.date<=to &&
-    (netFilter==='all' || (netFilter==='wifi'?isWifi(r.type):isCell(r.type))) &&
-    (!grpOn || selectedGroups.has(deviceGroup(r.device)))
+    (netFilter==='all' || (netFilter==='wifi'?isWifi(r.type):isCell(r.type)))
   );
+}
+// Date + network + selected group(s) -- used for the Top Apps/Top Devices
+// tabs and their charts/tables.
+function activeRows(){
+  const base = dateNetRows();
+  const grpOn = selectedGroups.size>0;
+  return grpOn ? base.filter(r=>selectedGroups.has(deviceGroup(r.device))) : base;
 }
 
 function apply(){
   selectedApp=null; $('drillCard').classList.add('hidden');
   $('devDrillCard').classList.add('hidden');
-  const rows = activeRows();
+  const baseRows = dateNetRows();   // date+network only, all groups -- for the group cards
+  const rows = activeRows();        // + selected group(s) -- for the top lists
   lastRows = rows;
   const n = +$('topN').value;
 
@@ -401,24 +389,27 @@ function apply(){
   const devices = Object.entries(byDev).map(([device,v])=>({device,...v}))
     .sort((x,y)=>y.total-x.total).slice(0,n);
 
-  const grpTxt = (selectedGroups && $('grpToggle')) ? ' · '+$('grpToggle').textContent.toLowerCase() : '';
+  const grpTxt = selectedGroups.size>0
+    ? ' · ' + selectedGroups.size + (selectedGroups.size===1?' group':' groups') + ' selected'
+    : ' · all groups';
   $('activeFilter').textContent =
     `${$('from').value} → ${$('to').value} · ${netFilter==='all'?'all networks':netFilter}${grpTxt}`;
   $('appCount').textContent = `${apps.length} shown · ${rows.length.toLocaleString()} records`;
   $('devCount').textContent = `${devices.length} shown · ${rows.length.toLocaleString()} records`;
+  $('grpClearSel').classList.toggle('hidden', selectedGroups.size===0);
 
   renderAppTable(apps);
   renderAppChart(apps);
   renderDevTable(devices);
   renderDevChart(devices);
-  renderGroupCards(rows);
+  renderGroupCards(baseRows);
 
   // Best-effort live Play Store names; re-render if any resolve.
   enrichNames(apps.map(a=>a.app)).then(changed=>{
     if(!changed) return;
     renderAppTable(apps);
     renderAppChart(apps);
-    renderGroupCards(rows);
+    renderGroupCards(baseRows);
   });
 }
 
@@ -643,16 +634,23 @@ function renderGroupCards(rows){
     g.apps[r.app]=(g.apps[r.app]||0)+r.vol;
   });
   const groups=Object.entries(byGrp).map(([group,v])=>({group,...v})).sort((a,b)=>b.total-a.total);
-  $('grpSumCount').textContent=`${groups.length} group(s)`;
+  $('grpSumCount').textContent = selectedGroups.size>0
+    ? `${selectedGroups.size} of ${groups.length} selected`
+    : `${groups.length} group(s)`;
   const wrap=$('groupCards'); wrap.innerHTML='';
   if(!groups.length){ wrap.innerHTML='<div class="muted">No groups in current selection.</div>'; return; }
   groups.forEach(g=>{
     const topApp=Object.entries(g.apps).sort((a,b)=>b[1]-a[1])[0];
-    const card=document.createElement('div'); card.className='gcard';
+    const isSel = selectedGroups.has(g.group);
+    const card=document.createElement('div'); card.className='gcard click'+(isSel?' sel':'');
     card.innerHTML=`<h3 title="${esc(g.group)}">${esc(trimGroupName(g.group))}</h3>
       <div class="gtot">${fmt(g.total)}</div>
       <div class="grow"><span>${g.devs.size} device(s)</span><span>↑${fmt(g.up)} ↓${fmt(g.down)}</span></div>
       <div class="grow"><span>Top app</span><span title="${topApp?esc(topApp[0]):''}">${topApp?esc(appName(topApp[0])):'—'}</span></div>`;
+    card.onclick=()=>{
+      selectedGroups.has(g.group) ? selectedGroups.delete(g.group) : selectedGroups.add(g.group);
+      apply();
+    };
     wrap.appendChild(card);
   });
 }
