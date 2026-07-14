@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/style.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
 <div class="wrap">
@@ -44,7 +45,7 @@
     <div class="stats" id="reportStats"></div>
   </div>
 
-  <div class="card hidden" id="analysisCard">
+  <div class="hidden" id="analysisWrap">
     <div class="tabs" id="tabSeg">
       <button type="button" data-tab="notais" class="on">1. Not using AIS carrier</button>
       <button type="button" data-tab="offlineusage">2. Offline with usage in report</button>
@@ -82,7 +83,7 @@ const loadDevices = fetch('/api/device-status')
   .then(data => {
     DEVICES = (data.devices||[]).filter(d => d && d.name);
     $('loadHint').classList.add('hidden');
-    $('analysisCard').classList.remove('hidden');
+    $('analysisWrap').classList.remove('hidden');
     renderSummary();
     if (BILLING) renderReportBanner(); // devices arrived after a file was already dropped
     renderActiveTab();
@@ -271,9 +272,37 @@ drop.onclick = () => fileInput.click();
 drop.addEventListener('drop', ev => { if(ev.dataTransfer.files.length) handleFile(ev.dataTransfer.files[0]); });
 fileInput.onchange = () => { if(fileInput.files.length) handleFile(fileInput.files[0]); };
 
+// ---------- shared panel helpers (mirrors the Top Apps / Top Devices frame) ----------
+function panelHead(title, countText){
+  return `<div class="panelhead"><h2>${esc(title)}</h2><span class="pill">${esc(countText)}</span></div>`;
+}
+function numberedTable(headers, rowsArr, emptyMsg){
+  if (!rowsArr.length) return `<div class="empty">${esc(emptyMsg || 'No matching devices.')}</div>`;
+  const thead = '<tr>' + '<th class="rank">#</th>' + headers.map(h=>`<th>${esc(h)}</th>`).join('') + '</tr>';
+  const tbody = rowsArr.map((cells,i) => '<tr>' + `<td class="rank">${i+1}</td>` + cells.map(c=>`<td>${c}</td>`).join('') + '</tr>').join('');
+  return `<table><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+}
+function barChart(canvasId, labels, values, opts){
+  opts = opts || {};
+  return new Chart($(canvasId), {
+    type: 'bar',
+    data: { labels, datasets: [{ label: opts.label || 'Value', data: values, backgroundColor: opts.color || '#7c8cff' }] },
+    options: {
+      responsive: true,
+      indexAxis: opts.horizontal ? 'y' : 'x',
+      plugins: { legend: { display: false }, tooltip: { callbacks: opts.tooltip ? { label: opts.tooltip } : undefined } },
+      scales: {
+        x: { ticks: { color: '#8597b0', maxRotation: opts.horizontal ? 0 : 60, minRotation: opts.horizontal ? 0 : 30 }, grid: { color: '#1c2840' } },
+        y: { ticks: { color: '#8597b0', font: opts.horizontal ? { size: 10 } : undefined }, grid: { color: '#1c2840' } },
+      },
+    },
+  });
+}
+
 // ---------- tabs ----------
 let activeTab = 'notais';
 let inactiveDaysThreshold = 7;
+let notAisChart = null, offlineChart = null, inactiveChart = null;
 
 $('tabSeg').querySelectorAll('button').forEach(b=>{
   b.onclick = () => {
@@ -290,23 +319,33 @@ function renderActiveTab(){
   else renderInactive();
 }
 
-function tableHtml(headers, rowsArr, emptyMsg){
-  if (!rowsArr.length) return `<div class="empty">${esc(emptyMsg || 'No matching devices.')}</div>`;
-  const thead = '<tr>' + headers.map(h=>`<th>${esc(h)}</th>`).join('') + '</tr>';
-  const tbody = rowsArr.map(cells => '<tr>' + cells.map(c=>`<td>${c}</td>`).join('') + '</tr>').join('');
-  return `<div class="pill" style="margin-bottom:10px;">${rowsArr.length} device(s)</div><table><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
-}
-
 // 1) Devices whose live MobiControl carrier is not AIS.
 function renderNotAis(){
+  if (notAisChart) { notAisChart.destroy(); notAisChart = null; }
   const rows = DEVICES.filter(d => !/^ais$/i.test(String(d.carrier||'').trim()));
-  $('tabBody').innerHTML =
-    '<div class="hint" style="margin-bottom:14px;">Based on each device\'s live CellularCarrier field from MobiControl (independent of the uploaded report).</div>' +
-    tableHtml(
-      ['Device / Email', 'Group', 'Carrier'],
-      rows.map(d => [esc(d.email || d.name), esc(d.path || '—'), esc(d.carrier ? d.carrier : 'Unknown')]),
-      'Every device with a known carrier reports AIS.'
-    );
+
+  const byCarrier = {};
+  rows.forEach(d => {
+    const c = d.carrier ? d.carrier : 'Unknown';
+    byCarrier[c] = (byCarrier[c] || 0) + 1;
+  });
+  const carrierEntries = Object.entries(byCarrier).sort((a,b) => b[1]-a[1]);
+
+  $('tabBody').innerHTML = `
+    <div class="card">
+      ${panelHead('Devices not using AIS carrier', `${rows.length} shown · ${DEVICES.length.toLocaleString()} records`)}
+      <canvas id="notAisChart" style="max-height:280px;"></canvas>
+      ${numberedTable(
+        ['Device / Email', 'Group', 'Carrier'],
+        rows.map(d => [esc(d.email || d.name), esc(d.path || '—'), esc(d.carrier ? d.carrier : 'Unknown')]),
+        'Every device with a known carrier reports AIS.'
+      )}
+      <div class="hint">Based on each device's live CellularCarrier field from MobiControl (independent of the uploaded report).</div>
+    </div>`;
+
+  if (carrierEntries.length) {
+    notAisChart = barChart('notAisChart', carrierEntries.map(e=>e[0]), carrierEntries.map(e=>e[1]), { label: 'Devices', color: '#7c8cff' });
+  }
 }
 
 // 2) Devices whose last known connection to MobiControl falls within/before
@@ -314,10 +353,13 @@ function renderNotAis(){
 // time the report says they used AIS data) -- lists their email accounts,
 // matched by phone number.
 function renderOfflineUsage(){
+  if (offlineChart) { offlineChart.destroy(); offlineChart = null; }
+
   if (!BILLING) {
-    $('tabBody').innerHTML = '<div class="hint">Upload the AIS Data Usage report above to run this check.</div>';
+    $('tabBody').innerHTML = `<div class="card">${panelHead('Offline devices with usage in report', '0 shown · 0 records')}<div class="hint">Upload the AIS Data Usage report above to run this check.</div></div>`;
     return;
   }
+
   const withPhone = DEVICES.filter(d => d.phone);
   const periodEnd = periodEndDate(BILLING.period);
   const periodStart = periodStartDate(BILLING.period);
@@ -340,25 +382,33 @@ function renderOfflineUsage(){
     const rec = BILLING.byPhone[normalizePhone(d.phone)];
     if (rec && rec.hasUsage) matches.push({ d, rec });
   });
+  matches.sort((a,b) => b.rec.totalKB - a.rec.totalKB);
 
-  let html = '<div class="hint" style="margin-bottom:14px;">Devices matched by phone number to a report row with nonzero usage, whose last known MobiControl connection was on or before the end of the billing period'
-    + (BILLING.period ? ' (' + esc(BILLING.period)
-        + (periodStart && periodEnd ? ', ' + periodStart.toLocaleDateString() + ' – ' + periodEnd.toLocaleDateString() : '')
-        + ')' : '') + '.</div>';
+  const countText = `${matches.length} shown · ${BILLING.records.length.toLocaleString()} records`;
 
   if (!withPhone.length) {
-    html += '<div class="empty">No device on this MobiControl server exposes a phone number field, so devices could not be matched to the report.</div>';
-    $('tabBody').innerHTML = html;
+    $('tabBody').innerHTML = `<div class="card">${panelHead('Offline devices with usage in report', countText)}<div class="empty">No device on this MobiControl server exposes a phone number field, so devices could not be matched to the report.</div></div>`;
     return;
+  }
+
+  const periodLabel = BILLING.period
+    ? esc(BILLING.period) + (periodStart && periodEnd ? ', ' + periodStart.toLocaleDateString() + ' – ' + periodEnd.toLocaleDateString() : '')
+    : '';
+
+  let html = `<div class="card">
+    ${panelHead('Offline devices with usage in report', countText)}`;
+
+  if (matches.length) {
+    html += `<canvas id="offlineChart" style="max-height:280px;"></canvas>`;
   }
 
   if (matches.length) {
     const emails = matches.map(m => m.d.email || m.rec.name).join('\n');
-    html += `<textarea readonly style="width:100%;min-height:90px;background:#0a1220;border:1px solid var(--line);border-radius:9px;color:var(--ink);padding:10px 12px;font-size:13px;margin-bottom:10px;">${esc(emails)}</textarea>`
+    html += `<textarea readonly style="width:100%;min-height:90px;background:#0a1220;border:1px solid var(--line);border-radius:9px;color:var(--ink);padding:10px 12px;font-size:13px;margin:14px 0 10px;">${esc(emails)}</textarea>`
       + '<button type="button" class="ghost" id="copyOfflineEmails" style="margin-bottom:14px;">Copy email list</button>';
   }
 
-  html += tableHtml(
+  html += numberedTable(
     ['Device / Email', 'Phone', 'Group', 'Last connected', 'Usage in report'],
     matches.map(({d,rec}) => [
       esc(d.email || d.name),
@@ -369,8 +419,21 @@ function renderOfflineUsage(){
     ]),
     'No device matched a report row with usage while offline for this period.'
   );
+  html += `<div class="hint">Devices matched by phone number to a report row with nonzero usage, whose last known MobiControl connection was on or before the end of the billing period${periodLabel ? ' (' + periodLabel + ')' : ''}.</div>`;
+  html += `</div>`;
 
   $('tabBody').innerHTML = html;
+
+  if (matches.length) {
+    const top = matches.slice(0,15);
+    offlineChart = barChart(
+      'offlineChart',
+      top.map(m => (m.d.email || m.d.name)),
+      top.map(m => +(m.rec.totalKB/1048576).toFixed(2)),
+      { label: 'Usage (GB)', color: '#ffb648', horizontal: true, tooltip: c => `${c.parsed.x.toFixed(2)} GB` }
+    );
+  }
+
   const copyBtn = $('copyOfflineEmails');
   if (copyBtn) {
     copyBtn.onclick = () => {
@@ -387,17 +450,19 @@ function renderOfflineUsage(){
 // user-supplied number of days.
 function renderInactive(){
   $('tabBody').innerHTML = `
-    <div class="controls" style="grid-template-columns:200px auto 1fr;margin-bottom:16px;">
-      <div>
-        <label>Not connected in over (days)</label>
-        <input type="number" id="inactiveDays" min="1" value="${inactiveDaysThreshold}">
+    <div class="card">
+      <div class="controls" style="grid-template-columns:200px auto 1fr;">
+        <div>
+          <label>Not connected in over (days)</label>
+          <input type="number" id="inactiveDays" min="1" value="${inactiveDaysThreshold}">
+        </div>
+        <div style="align-self:end;">
+          <button type="button" class="primary" id="applyInactive">Apply</button>
+        </div>
+        <div></div>
       </div>
-      <div style="align-self:end;">
-        <button type="button" class="primary" id="applyInactive">Apply</button>
-      </div>
-      <div></div>
     </div>
-    <div id="inactiveResults"></div>`;
+    <div id="inactiveResultsCard"></div>`;
 
   $('applyInactive').onclick = () => {
     const v = parseInt($('inactiveDays').value, 10);
@@ -408,6 +473,8 @@ function renderInactive(){
 }
 
 function renderInactiveResults(){
+  if (inactiveChart) { inactiveChart.destroy(); inactiveChart = null; }
+
   const now = Date.now();
   const withDate = [], noDate = [];
   DEVICES.forEach(d => {
@@ -419,15 +486,32 @@ function renderInactiveResults(){
   });
   withDate.sort((a,b) => b.days - a.days);
 
-  let html = tableHtml(
+  const countText = `${withDate.length} shown · ${DEVICES.length.toLocaleString()} records`;
+
+  let html = `<div class="card">
+    ${panelHead(`Devices inactive over ${inactiveDaysThreshold} day(s)`, countText)}`;
+  if (withDate.length) html += `<canvas id="inactiveChart" style="max-height:280px;"></canvas>`;
+  html += numberedTable(
     ['Device / Email', 'Group', 'Last connected', 'Days since'],
     withDate.map(({d,days,t}) => [esc(d.email || d.name), esc(d.path || '—'), esc(t.toLocaleString()), Math.floor(days)]),
     `No devices have gone more than ${inactiveDaysThreshold} day(s) without connecting.`
   );
   if (noDate.length) {
-    html += `<div class="hint" style="margin-top:12px;">${noDate.length} device(s) have no recorded last-connect time from this server and are not included above.</div>`;
+    html += `<div class="hint">${noDate.length} device(s) have no recorded last-connect time from this server and are not included above.</div>`;
   }
-  $('inactiveResults').innerHTML = html;
+  html += `</div>`;
+
+  $('inactiveResultsCard').innerHTML = html;
+
+  if (withDate.length) {
+    const top = withDate.slice(0,15);
+    inactiveChart = barChart(
+      'inactiveChart',
+      top.map(({d}) => (d.email || d.name)),
+      top.map(({days}) => Math.floor(days)),
+      { label: 'Days since', color: '#ff7b7b', horizontal: true, tooltip: c => `${c.parsed.x} day(s)` }
+    );
+  }
 }
 </script>
 </body>
