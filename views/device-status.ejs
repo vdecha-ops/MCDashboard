@@ -1,4 +1,4 @@
-…รายละเอียดการใช้หมายเลขโทรศัพท์รวมปริมาณการใช้งานหมายเลขโทรศัพท์เดือนรอบค่าใช้บริการรายงานวันที่หมายเลขโทรศัพท์หมายเลขโทรศัพท์รวมปริมาณการใช้งานรวมปริมาณการใช้งานบาทรวมปริมาณการใช้งาน———–——<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -37,7 +37,11 @@
     </div>
     <div id="importErr" class="err hidden"></div>
     <div id="importOk" class="success hidden"></div>
-    <div class="hint hidden" id="periodBanner"></div>
+  </div>
+
+  <!-- Source report details banner (mirrors the Telecom Data Usage summary bar) -->
+  <div class="card hidden" id="reportBanner">
+    <div class="stats" id="reportStats"></div>
   </div>
 
   <div class="card hidden" id="analysisCard">
@@ -54,6 +58,11 @@
 <script>
 const $ = id => document.getElementById(id);
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+const fmt = kb => {
+  if (kb >= 1048576) return (kb/1048576).toFixed(2)+' GB';
+  if (kb >= 1024)    return (kb/1024).toFixed(1)+' MB';
+  return kb.toFixed(0)+' KB';
+};
 
 // ---------- live device status ----------
 let DEVICES = [];
@@ -75,6 +84,7 @@ const loadDevices = fetch('/api/device-status')
     $('loadHint').classList.add('hidden');
     $('analysisCard').classList.remove('hidden');
     renderSummary();
+    if (BILLING) renderReportBanner(); // devices arrived after a file was already dropped
     renderActiveTab();
   })
   .catch(err => {
@@ -142,6 +152,23 @@ function findPeriodInfo(rows){
     }
   }
   return { period, reportDate };
+}
+
+// The billing period is a single "MM/YYYY" string (e.g. "06/2026") -- there's
+// no per-row date range in this report, so we treat the whole calendar month
+// as the reporting window when checking whether a device's last-known
+// connection falls within/before it.
+function periodEndDate(periodStr){
+  const m = /^(\d{1,2})\/(\d{4})$/.exec(String(periodStr||'').trim());
+  if (!m) return null;
+  const month = parseInt(m[1],10), year = parseInt(m[2],10);
+  return new Date(year, month, 0, 23, 59, 59, 999); // last instant of that month
+}
+function periodStartDate(periodStr){
+  const m = /^(\d{1,2})\/(\d{4})$/.exec(String(periodStr||'').trim());
+  if (!m) return null;
+  const month = parseInt(m[1],10), year = parseInt(m[2],10);
+  return new Date(year, month-1, 1, 0, 0, 0, 0);
 }
 
 function parseAisBillingReport(rows){
@@ -218,15 +245,23 @@ function ingestBilling(rows){
     (parsed.period ? ` for period ${parsed.period}` : '') + '.';
   $('importOk').classList.remove('hidden');
 
-  const parts = [];
-  if (parsed.period) parts.push('Billing period: ' + parsed.period);
-  if (parsed.reportDate) parts.push('Report date: ' + parsed.reportDate);
-  if (parts.length) {
-    $('periodBanner').textContent = parts.join(' · ');
-    $('periodBanner').classList.remove('hidden');
-  }
-
+  renderReportBanner();
   renderActiveTab();
+}
+
+// Highlights the details of the uploaded source report as a stat bar,
+// matching the Telecom Data Usage dashboard's summary-bar style.
+function renderReportBanner(){
+  if (!BILLING) return;
+  const totalKB = BILLING.records.reduce((s,r) => s + r.totalKB, 0);
+  const matchedCount = DEVICES.filter(d => d.phone && BILLING.byPhone[normalizePhone(d.phone)]).length;
+  $('reportStats').innerHTML = `
+    <div class="stat"><div class="n">${esc(fmt(totalKB))}</div><div class="l">total volume</div></div>
+    <div class="stat"><div class="n">${BILLING.records.length}</div><div class="l">subscribers</div></div>
+    <div class="stat"><div class="n">${matchedCount}</div><div class="l">matched devices</div></div>
+    <div class="stat"><div class="n">${esc(BILLING.period || '—')}</div><div class="l">billing period</div></div>
+    <div class="stat"><div class="n">${esc(BILLING.reportDate || '—')}</div><div class="l">report created</div></div>`;
+  $('reportBanner').classList.remove('hidden');
 }
 
 const drop = $('drop'), fileInput = $('file');
@@ -274,24 +309,42 @@ function renderNotAis(){
     );
 }
 
-// 2) Devices confirmed offline via the API that still show usage in the
-// uploaded report -- lists their email accounts, matched by phone number.
+// 2) Devices whose last known connection to MobiControl falls within/before
+// the report's own billing period (i.e. they weren't checking in around the
+// time the report says they used AIS data) -- lists their email accounts,
+// matched by phone number.
 function renderOfflineUsage(){
   if (!BILLING) {
     $('tabBody').innerHTML = '<div class="hint">Upload the AIS Data Usage report above to run this check.</div>';
     return;
   }
   const withPhone = DEVICES.filter(d => d.phone);
+  const periodEnd = periodEndDate(BILLING.period);
+  const periodStart = periodStartDate(BILLING.period);
+
+  // "Offline for this period" = never reported a last-connect time, or the
+  // last one on record is on/before the end of the report's billing month
+  // (i.e. no confirmed connection during or after that period).
+  function offlineForPeriod(d){
+    if (!d.lastSeen) return true;
+    const t = new Date(d.lastSeen);
+    if (isNaN(t.getTime())) return true;
+    if (!periodEnd) return deviceOnline(d) === false; // couldn't parse the period -- fall back to live status
+    return t.getTime() <= periodEnd.getTime();
+  }
+
   const matches = [];
   DEVICES.forEach(d => {
-    if (deviceOnline(d) !== false) return; // only devices confirmed offline
     if (!d.phone) return;
+    if (!offlineForPeriod(d)) return;
     const rec = BILLING.byPhone[normalizePhone(d.phone)];
     if (rec && rec.hasUsage) matches.push({ d, rec });
   });
 
-  let html = '<div class="hint" style="margin-bottom:14px;">Offline devices (per MobiControl) matched by phone number to a report row with nonzero usage'
-    + (BILLING.period ? ' for ' + esc(BILLING.period) : '') + '.</div>';
+  let html = '<div class="hint" style="margin-bottom:14px;">Devices matched by phone number to a report row with nonzero usage, whose last known MobiControl connection was on or before the end of the billing period'
+    + (BILLING.period ? ' (' + esc(BILLING.period)
+        + (periodStart && periodEnd ? ', ' + periodStart.toLocaleDateString() + ' – ' + periodEnd.toLocaleDateString() : '')
+        + ')' : '') + '.</div>';
 
   if (!withPhone.length) {
     html += '<div class="empty">No device on this MobiControl server exposes a phone number field, so devices could not be matched to the report.</div>';
@@ -306,9 +359,15 @@ function renderOfflineUsage(){
   }
 
   html += tableHtml(
-    ['Device / Email', 'Phone', 'Group', 'Usage in report'],
-    matches.map(({d,rec}) => [esc(d.email || d.name), esc(rec.phone), esc(d.path || '—'), esc(rec.text)]),
-    'No offline device matched a report row with usage.'
+    ['Device / Email', 'Phone', 'Group', 'Last connected', 'Usage in report'],
+    matches.map(({d,rec}) => [
+      esc(d.email || d.name),
+      esc(rec.phone),
+      esc(d.path || '—'),
+      d.lastSeen && !isNaN(new Date(d.lastSeen).getTime()) ? esc(new Date(d.lastSeen).toLocaleString()) : 'Never',
+      esc(rec.text),
+    ]),
+    'No device matched a report row with usage while offline for this period.'
   );
 
   $('tabBody').innerHTML = html;
