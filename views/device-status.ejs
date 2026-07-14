@@ -3,17 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Device Status with AIS Usage</title>
+<title>AIS Data Usage Report Analysis</title>
 <link rel="stylesheet" href="/style.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 <div class="wrap">
 
   <header class="top">
     <div>
-      <h1>Device Status with AIS Usage</h1>
-      <div class="sub">Live device status from MobiControl, joined with AIS-carrier usage from an uploaded Telecom Data Usage report.</div>
+      <h1>AIS Data Usage Report Analysis</h1>
+      <div class="sub">Live device status from MobiControl, analyzed against an uploaded AIS Data Usage report.</div>
     </div>
     <div style="display:flex;gap:16px;align-items:center;">
       <a href="/menu" class="back">&larr; Menu</a>
@@ -27,59 +28,25 @@
     <div class="hint" id="loadHint">Loading live device status from MobiControl…</div>
   </div>
 
-  <!-- Optional AIS usage upload -->
+  <!-- AIS Data Usage report upload (source of data for the analyses below) -->
   <div class="card" id="importCard">
     <div class="drop" id="drop">
-      <h2>Drop a Telecom Data Usage CSV here (optional)</h2>
-      <p>Adds AIS-carrier upload/download/total per device below. The file stays in your browser, nothing is uploaded. Click to browse.</p>
-      <input type="file" id="file" accept=".csv,text/csv" class="hidden">
+      <h2>Drop the AIS Data Usage report here (.xlsx or .csv)</h2>
+      <p>The report (e.g. "รายละเอียดการใช้ internet.xlsx") is parsed entirely in your browser -- it is never uploaded to this server. Click to browse.</p>
+      <input type="file" id="file" accept=".xlsx,.xls,.csv" class="hidden">
     </div>
     <div id="importErr" class="err hidden"></div>
     <div id="importOk" class="success hidden"></div>
+    <div class="hint hidden" id="periodBanner"></div>
   </div>
 
-  <div class="card hidden" id="tableCard">
-    <div class="panelhead">
-      <h2>Devices</h2>
-      <span class="pill" id="devCount"></span>
+  <div class="card hidden" id="analysisCard">
+    <div class="tabs" id="tabSeg">
+      <button type="button" data-tab="notais" class="on">1. Not using AIS carrier</button>
+      <button type="button" data-tab="offlineusage">2. Offline with usage in report</button>
+      <button type="button" data-tab="inactive">3. Inactive over N days</button>
     </div>
-    <div class="controls" style="grid-template-columns:1fr 220px 220px;margin-bottom:16px;">
-      <div>
-        <label>Search device / email / group</label>
-        <input type="text" id="search" placeholder="Type to filter…">
-      </div>
-      <div>
-        <label>Connection</label>
-        <div class="seg" id="connSeg">
-          <button type="button" data-conn="all" class="on">All</button>
-          <button type="button" data-conn="online">Online</button>
-          <button type="button" data-conn="offline">Offline</button>
-        </div>
-      </div>
-      <div>
-        <label>AIS usage</label>
-        <div class="seg" id="aisSeg">
-          <button type="button" data-ais="all" class="on">All devices</button>
-          <button type="button" data-ais="only">With AIS usage</button>
-        </div>
-      </div>
-    </div>
-    <table id="devStatusTable">
-      <thead><tr>
-        <th>Device</th>
-        <th>Group</th>
-        <th>Status</th>
-        <th>Battery</th>
-        <th>Carrier</th>
-        <th>Signal</th>
-        <th>Roaming</th>
-        <th class="num bar-wifi">AIS Up</th>
-        <th class="num bar-cell">AIS Down</th>
-        <th class="num">AIS Total</th>
-      </tr></thead>
-      <tbody></tbody>
-    </table>
-    <div class="hint">Status/battery/carrier fields depend on what this MobiControl server actually reports per device; unavailable fields show as "—". AIS usage columns populate once a report is uploaded above and are filtered to Carrier = AIS.</div>
+    <div id="tabBody"></div>
   </div>
 
 </div>
@@ -87,17 +54,9 @@
 <script>
 const $ = id => document.getElementById(id);
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
-const fmt = kb => {
-  if (kb >= 1048576) return (kb/1048576).toFixed(2)+' GB';
-  if (kb >= 1024)    return (kb/1024).toFixed(1)+' MB';
-  return kb.toFixed(0)+' KB';
-};
 
 // ---------- live device status ----------
 let DEVICES = [];
-let connFilter = 'all';
-let aisFilter = 'all';
-let searchText = '';
 
 function deviceOnline(dev){
   if (dev.connected === true) return true;
@@ -108,125 +67,166 @@ function deviceOnline(dev){
   }
   return null; // unknown -- this deployment doesn't expose a field we recognize
 }
-function timeAgo(iso){
-  const t = new Date(iso);
-  if (isNaN(t.getTime())) return '—';
-  const mins = Math.round((Date.now()-t.getTime())/60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return mins+'m ago';
-  const hrs = Math.round(mins/60);
-  if (hrs < 24) return hrs+'h ago';
-  return Math.round(hrs/24)+'d ago';
-}
-function statusPill(dev){
-  const on = deviceOnline(dev);
-  if (on === true)  return '<span class="tag" style="background:#123822;color:#36d399;">● Online</span>';
-  if (on === false) return '<span class="tag">● Offline'+(dev.lastSeen?' · '+esc(timeAgo(dev.lastSeen)):'')+'</span>';
-  return '<span class="muted">—</span>';
-}
-function batteryText(dev){
-  if (dev.battery === '' || dev.battery === null || dev.battery === undefined) return '—';
-  const n = Number(dev.battery);
-  return isFinite(n) ? (n<=1 ? Math.round(n*100)+'%' : Math.round(n)+'%') : String(dev.battery);
-}
 
 const loadDevices = fetch('/api/device-status')
   .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
   .then(data => {
     DEVICES = (data.devices||[]).filter(d => d && d.name);
     $('loadHint').classList.add('hidden');
-    $('tableCard').classList.remove('hidden');
+    $('analysisCard').classList.remove('hidden');
     renderSummary();
-    renderTable();
+    renderActiveTab();
   })
   .catch(err => {
     $('loadHint').textContent = 'Could not load device status from MobiControl (' + err.message + ').';
     $('loadHint').classList.add('err');
   });
 
-// ---------- optional AIS usage CSV ----------
-let AIS_BY_DEVICE = {}; // lowercased device name -> {up,down,total}
-let hasUsageData = false;
+function renderSummary(){
+  const total = DEVICES.length;
+  const online = DEVICES.filter(d=>deviceOnline(d)===true).length;
+  const offline = DEVICES.filter(d=>deviceOnline(d)===false).length;
+  const withPhone = DEVICES.filter(d=>d.phone).length;
+  $('summary').innerHTML = `
+    <div class="stat"><div class="n">${total}</div><div class="l">devices</div></div>
+    <div class="stat"><div class="n">${online}</div><div class="l">online</div></div>
+    <div class="stat"><div class="n">${offline}</div><div class="l">offline</div></div>
+    <div class="stat"><div class="n">${withPhone}</div><div class="l">have a phone number on file</div></div>`;
+}
 
-function normCell(c){ return String(c==null?'':c).trim(); }
-function num(v){ const n = parseFloat(String(v==null?'':v).replace(/,/g,'').trim()); return isFinite(n)?n:0; }
+// ---------- AIS Data Usage report parsing ----------
+// The report is an AIS billing export: a few metadata rows (registrant,
+// customer code, billing period, report date), then a header row containing
+// "หมายเลขโทรศัพท์" (phone number), followed by one row per subscriber. The
+// subscriber name has no header text of its own -- it's always the column
+// immediately after the phone number. Total internet usage for the period
+// is in the "รวมปริมาณการใช้งาน Internet" column, formatted as free text
+// like "17 GB. 996 MB. 1023 KB." (any of the three units may be omitted).
+let BILLING = null; // { period, reportDate, records: [...], byPhone: {...} }
 
-function findHeaderRow(rows){
-  for (let i=0;i<Math.min(rows.length,25);i++){
-    const row=rows[i]; let hasDevice=false, hasVolume=false;
-    for (let j=0;j<row.length;j++){
-      const c=normCell(row[j]).toLowerCase();
-      if (/device\s*name/.test(c)) hasDevice=true;
-      if (/volume/.test(c)) hasVolume=true;
+function normalizePhone(p){
+  const digits = String(p||'').replace(/\D/g,'');
+  return digits.slice(-9); // last 9 digits -- absorbs leading 0 / +66 / 66 variants
+}
+
+function parseUsageText(s){
+  s = String(s==null ? '' : s);
+  const gbM = s.match(/(\d+(?:\.\d+)?)\s*GB/i);
+  const mbM = s.match(/(\d+(?:\.\d+)?)\s*MB/i);
+  const kbM = s.match(/(\d+(?:\.\d+)?)\s*KB/i);
+  const gb = gbM ? parseFloat(gbM[1]) : 0;
+  const mb = mbM ? parseFloat(mbM[1]) : 0;
+  const kb = kbM ? parseFloat(kbM[1]) : 0;
+  const totalKB = gb*1024*1024 + mb*1024 + kb;
+  return { totalKB, hasUsage: totalKB > 0, text: s.trim() || '0 KB.' };
+}
+
+function findAisHeaderRowIndex(rows){
+  for (let i=0; i<Math.min(rows.length,20); i++){
+    const row = rows[i] || [];
+    for (let j=0; j<row.length; j++){
+      if (/หมายเลขโทรศัพท์/.test(String(row[j]==null?'':row[j]))) return i;
     }
-    if (hasDevice && hasVolume) return i;
   }
   return -1;
 }
-function mapColumns(headerRow){
-  const cols={};
-  headerRow.forEach((cell,idx)=>{
-    const c=normCell(cell).toLowerCase();
-    if (cols.device===undefined && /device\s*name/.test(c)) cols.device=idx;
-    else if (cols.upload===undefined && /upload/.test(c)) cols.upload=idx;
-    else if (cols.download===undefined && /download/.test(c)) cols.download=idx;
-    else if (cols.volume===undefined && /volume/.test(c)) cols.volume=idx;
-    else if (cols.carrier===undefined && /carrier/.test(c)) cols.carrier=idx;
-  });
-  return cols;
+
+function findPeriodInfo(rows){
+  let period = null, reportDate = null;
+  for (let i=0; i<Math.min(rows.length,20); i++){
+    const row = rows[i] || [];
+    for (let j=0; j<row.length; j++){
+      const c = String(row[j]==null?'':row[j]);
+      if (/เดือน\s*\/\s*รอบค่าใช้บริการ/.test(c)) period = String(row[j+1]==null?'':row[j+1]).trim();
+      if (/รายงานวันที่/.test(c)) reportDate = String(row[j+1]==null?'':row[j+1]).trim();
+    }
+  }
+  return { period, reportDate };
+}
+
+function parseAisBillingReport(rows){
+  const headerIdx = findAisHeaderRowIndex(rows);
+  if (headerIdx === -1) {
+    throw new Error('Could not find the phone-number header ("หมายเลขโทรศัพท์") in this file -- is this the AIS Data Usage report?');
+  }
+  const headerRow = rows[headerIdx];
+  const phoneCol = headerRow.findIndex(c => /หมายเลขโทรศัพท์/.test(String(c==null?'':c)));
+  const nameCol = phoneCol + 1;
+  let usageCol = headerRow.findIndex(c => String(c==null?'':c).trim() === 'รวมปริมาณการใช้งาน Internet');
+  if (usageCol === -1) {
+    usageCol = headerRow.findIndex(c => /รวมปริมาณการใช้งาน\s*Internet/i.test(String(c==null?'':c)) && !/บาท/.test(String(c==null?'':c)));
+  }
+  if (usageCol === -1) {
+    throw new Error('Could not find the "รวมปริมาณการใช้งาน Internet" usage column in this file.');
+  }
+
+  const { period, reportDate } = findPeriodInfo(rows);
+
+  const records = [];
+  for (let i = headerIdx+1; i < rows.length; i++){
+    const row = rows[i];
+    if (!row) continue;
+    const phoneRaw = String(row[phoneCol]==null?'':row[phoneCol]).trim();
+    if (!/^0\d{9}$/.test(phoneRaw)) continue; // skip anything that isn't a 10-digit Thai mobile number
+    const name = String(row[nameCol]==null?'':row[nameCol]).trim();
+    const usage = parseUsageText(row[usageCol]);
+    records.push({ phone: phoneRaw, phoneKey: normalizePhone(phoneRaw), name, ...usage });
+  }
+  return { period, reportDate, records };
 }
 
 function handleFile(file){
   const err = $('importErr'), ok = $('importOk');
   err.classList.add('hidden'); err.textContent = '';
   ok.classList.add('hidden'); ok.textContent = '';
-  Papa.parse(file, {
-    skipEmptyLines: false,
-    complete: res => {
-      try { ingestAisUsage(res.data); }
-      catch(e){ err.textContent = e.message; err.classList.remove('hidden'); }
-    },
-    error: e => { err.textContent = 'Could not read file: '+e.message; err.classList.remove('hidden'); }
-  });
+
+  const showErr = (m) => { err.textContent = m; err.classList.remove('hidden'); };
+  const ingestSafe = (rows) => { try { ingestBilling(rows); } catch(e){ showErr(e.message); } };
+
+  const isCsv = /\.csv$/i.test(file.name);
+  if (isCsv) {
+    Papa.parse(file, {
+      skipEmptyLines: false,
+      complete: res => ingestSafe(res.data),
+      error: e => showErr('Could not read file: ' + e.message),
+    });
+  } else {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        ingestSafe(rows);
+      } catch (ex) { showErr('Could not read file: ' + ex.message); }
+    };
+    reader.onerror = () => showErr('Could not read the file.');
+    reader.readAsArrayBuffer(file);
+  }
 }
 
-function ingestAisUsage(data){
-  if(!data.length) throw new Error('The file has no rows.');
-  const headerIdx = findHeaderRow(data);
-  if (headerIdx===-1) throw new Error('Could not find a header row with "Device Name" and "Volume" columns.');
-  const cols = mapColumns(data[headerIdx]);
-  if (cols.device===undefined || cols.volume===undefined) {
-    throw new Error('Missing expected column(s): device name, volume (kb).');
+function ingestBilling(rows){
+  const parsed = parseAisBillingReport(rows);
+  if (!parsed.records.length) {
+    throw new Error('No subscriber rows found (expected 10-digit phone numbers starting with 0).');
   }
-  if (cols.carrier===undefined) {
-    throw new Error('This report has no "Carrier" column, so AIS-only usage cannot be isolated.');
-  }
+  const byPhone = {};
+  parsed.records.forEach(r => { byPhone[r.phoneKey] = r; });
+  BILLING = Object.assign({}, parsed, { byPhone });
 
-  const byDev = {};
-  let aisRowCount = 0;
-  for (let i=headerIdx+1;i<data.length;i++){
-    const row = data[i];
-    if (!row || row.length===0) continue;
-    const device = normCell(row[cols.device]);
-    if (!device) continue;
-    const carrier = normCell(row[cols.carrier]);
-    if (!/^ais$/i.test(carrier)) continue;
-    aisRowCount++;
-    const key = device.toLowerCase();
-    const d = byDev[key] || (byDev[key]={up:0,down:0,total:0});
-    d.up += cols.upload!==undefined ? num(row[cols.upload]) : 0;
-    d.down += cols.download!==undefined ? num(row[cols.download]) : 0;
-    d.total += num(row[cols.volume]);
-  }
-
-  if (!aisRowCount) throw new Error('No rows with Carrier = AIS were found in this report.');
-
-  AIS_BY_DEVICE = byDev;
-  hasUsageData = true;
-  $('importOk').textContent = `Loaded AIS usage for ${Object.keys(byDev).length} device(s) from ${aisRowCount} row(s).`;
+  $('importOk').textContent = `Loaded ${parsed.records.length} subscriber row(s)` +
+    (parsed.period ? ` for period ${parsed.period}` : '') + '.';
   $('importOk').classList.remove('hidden');
-  renderSummary();
-  renderTable();
+
+  const parts = [];
+  if (parsed.period) parts.push('Billing period: ' + parsed.period);
+  if (parsed.reportDate) parts.push('Report date: ' + parsed.reportDate);
+  if (parts.length) {
+    $('periodBanner').textContent = parts.join(' · ');
+    $('periodBanner').classList.remove('hidden');
+  }
+
+  renderActiveTab();
 }
 
 const drop = $('drop'), fileInput = $('file');
@@ -236,78 +236,139 @@ drop.onclick = () => fileInput.click();
 drop.addEventListener('drop', ev => { if(ev.dataTransfer.files.length) handleFile(ev.dataTransfer.files[0]); });
 fileInput.onchange = () => { if(fileInput.files.length) handleFile(fileInput.files[0]); };
 
-// ---------- filters ----------
-$('connSeg').querySelectorAll('button').forEach(b=>{
-  b.onclick=()=>{ $('connSeg').querySelectorAll('button').forEach(x=>x.classList.remove('on'));
-    b.classList.add('on'); connFilter=b.dataset.conn; renderTable(); };
-});
-$('aisSeg').querySelectorAll('button').forEach(b=>{
-  b.onclick=()=>{ $('aisSeg').querySelectorAll('button').forEach(x=>x.classList.remove('on'));
-    b.classList.add('on'); aisFilter=b.dataset.ais; renderTable(); };
-});
-$('search').addEventListener('input', ()=>{ searchText = $('search').value.trim().toLowerCase(); renderTable(); });
+// ---------- tabs ----------
+let activeTab = 'notais';
+let inactiveDaysThreshold = 7;
 
-// ---------- render ----------
-function renderSummary(){
-  const total = DEVICES.length;
-  const online = DEVICES.filter(d=>deviceOnline(d)===true).length;
-  const offline = DEVICES.filter(d=>deviceOnline(d)===false).length;
-  const aisDevices = Object.keys(AIS_BY_DEVICE).length;
-  const aisTotal = Object.values(AIS_BY_DEVICE).reduce((s,v)=>s+v.total,0);
-  $('summary').innerHTML = `
-    <div class="stat"><div class="n">${total}</div><div class="l">devices</div></div>
-    <div class="stat"><div class="n">${online}</div><div class="l">online</div></div>
-    <div class="stat"><div class="n">${offline}</div><div class="l">offline</div></div>
-    <div class="stat"><div class="n">${hasUsageData ? aisDevices : '—'}</div><div class="l">devices w/ AIS usage</div></div>
-    <div class="stat"><div class="n">${hasUsageData ? fmt(aisTotal) : '—'}</div><div class="l">total AIS volume</div></div>`;
+$('tabSeg').querySelectorAll('button').forEach(b=>{
+  b.onclick = () => {
+    $('tabSeg').querySelectorAll('button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');
+    activeTab = b.dataset.tab;
+    renderActiveTab();
+  };
+});
+
+function renderActiveTab(){
+  if (activeTab === 'notais') renderNotAis();
+  else if (activeTab === 'offlineusage') renderOfflineUsage();
+  else renderInactive();
 }
 
-function renderTable(){
-  const tb = $('devStatusTable').querySelector('tbody');
-  tb.innerHTML = '';
+function tableHtml(headers, rowsArr, emptyMsg){
+  if (!rowsArr.length) return `<div class="empty">${esc(emptyMsg || 'No matching devices.')}</div>`;
+  const thead = '<tr>' + headers.map(h=>`<th>${esc(h)}</th>`).join('') + '</tr>';
+  const tbody = rowsArr.map(cells => '<tr>' + cells.map(c=>`<td>${c}</td>`).join('') + '</tr>').join('');
+  return `<div class="pill" style="margin-bottom:10px;">${rowsArr.length} device(s)</div><table><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+}
 
-  let rows = DEVICES.filter(d=>{
-    if (connFilter!=='all'){
-      const on = deviceOnline(d);
-      if (connFilter==='online' && on!==true) return false;
-      if (connFilter==='offline' && on!==false) return false;
-    }
-    const ais = AIS_BY_DEVICE[String(d.name||'').trim().toLowerCase()];
-    if (aisFilter==='only' && !ais) return false;
-    if (searchText){
-      const hay = (d.name+' '+(d.email||'')+' '+(d.path||'')).toLowerCase();
-      if (!hay.includes(searchText)) return false;
-    }
-    return true;
+// 1) Devices whose live MobiControl carrier is not AIS.
+function renderNotAis(){
+  const rows = DEVICES.filter(d => !/^ais$/i.test(String(d.carrier||'').trim()));
+  $('tabBody').innerHTML =
+    '<div class="hint" style="margin-bottom:14px;">Based on each device\'s live CellularCarrier field from MobiControl (independent of the uploaded report).</div>' +
+    tableHtml(
+      ['Device / Email', 'Group', 'Carrier'],
+      rows.map(d => [esc(d.email || d.name), esc(d.path || '—'), esc(d.carrier ? d.carrier : 'Unknown')]),
+      'Every device with a known carrier reports AIS.'
+    );
+}
+
+// 2) Devices confirmed offline via the API that still show usage in the
+// uploaded report -- lists their email accounts, matched by phone number.
+function renderOfflineUsage(){
+  if (!BILLING) {
+    $('tabBody').innerHTML = '<div class="hint">Upload the AIS Data Usage report above to run this check.</div>';
+    return;
+  }
+  const withPhone = DEVICES.filter(d => d.phone);
+  const matches = [];
+  DEVICES.forEach(d => {
+    if (deviceOnline(d) !== false) return; // only devices confirmed offline
+    if (!d.phone) return;
+    const rec = BILLING.byPhone[normalizePhone(d.phone)];
+    if (rec && rec.hasUsage) matches.push({ d, rec });
   });
 
-  rows = rows.map(d => ({ d, ais: AIS_BY_DEVICE[String(d.name||'').trim().toLowerCase()] }))
-    .sort((a,b) => (b.ais?b.ais.total:0) - (a.ais?a.ais.total:0));
+  let html = '<div class="hint" style="margin-bottom:14px;">Offline devices (per MobiControl) matched by phone number to a report row with nonzero usage'
+    + (BILLING.period ? ' for ' + esc(BILLING.period) : '') + '.</div>';
 
-  $('devCount').textContent = `${rows.length} of ${DEVICES.length} device(s)`;
-
-  if (!rows.length){
-    tb.innerHTML = '<tr><td colspan="10" class="empty">No devices match the current filter.</td></tr>';
+  if (!withPhone.length) {
+    html += '<div class="empty">No device on this MobiControl server exposes a phone number field, so devices could not be matched to the report.</div>';
+    $('tabBody').innerHTML = html;
     return;
   }
 
-  rows.forEach(({d,ais})=>{
-    const label = d.email || d.name;
-    const sub = label !== d.name ? `<div class="muted" style="font-size:11px;">${esc(d.name)}</div>` : '';
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${esc(label)}${sub}</td>
-      <td class="muted" title="${esc(d.path||'')}">${esc(d.path||'—')}</td>
-      <td>${statusPill(d)}</td>
-      <td>${esc(batteryText(d))}</td>
-      <td>${esc(d.carrier||'—')}</td>
-      <td>${esc(d.signal||'—')}</td>
-      <td>${d.roaming===true||/^(yes|true)$/i.test(d.roaming||'') ? '<span class="tag">Roaming</span>' : (d.roaming===false||/^(no|false)$/i.test(d.roaming||'') ? 'No' : '—')}</td>
-      <td class="num bar-wifi">${ais?fmt(ais.up):'—'}</td>
-      <td class="num bar-cell">${ais?fmt(ais.down):'—'}</td>
-      <td class="num">${ais?fmt(ais.total):'—'}</td>`;
-    tb.appendChild(tr);
+  if (matches.length) {
+    const emails = matches.map(m => m.d.email || m.rec.name).join('\n');
+    html += `<textarea readonly style="width:100%;min-height:90px;background:#0a1220;border:1px solid var(--line);border-radius:9px;color:var(--ink);padding:10px 12px;font-size:13px;margin-bottom:10px;">${esc(emails)}</textarea>`
+      + '<button type="button" class="ghost" id="copyOfflineEmails" style="margin-bottom:14px;">Copy email list</button>';
+  }
+
+  html += tableHtml(
+    ['Device / Email', 'Phone', 'Group', 'Usage in report'],
+    matches.map(({d,rec}) => [esc(d.email || d.name), esc(rec.phone), esc(d.path || '—'), esc(rec.text)]),
+    'No offline device matched a report row with usage.'
+  );
+
+  $('tabBody').innerHTML = html;
+  const copyBtn = $('copyOfflineEmails');
+  if (copyBtn) {
+    copyBtn.onclick = () => {
+      const emails = matches.map(m => m.d.email || m.rec.name).join('\n');
+      navigator.clipboard.writeText(emails).then(() => {
+        copyBtn.textContent = 'Copied!';
+        setTimeout(() => { copyBtn.textContent = 'Copy email list'; }, 1500);
+      }).catch(() => {});
+    };
+  }
+}
+
+// 3) Devices whose last-connect time (from the API) is older than a
+// user-supplied number of days.
+function renderInactive(){
+  $('tabBody').innerHTML = `
+    <div class="controls" style="grid-template-columns:200px auto 1fr;margin-bottom:16px;">
+      <div>
+        <label>Not connected in over (days)</label>
+        <input type="number" id="inactiveDays" min="1" value="${inactiveDaysThreshold}">
+      </div>
+      <div style="align-self:end;">
+        <button type="button" class="primary" id="applyInactive">Apply</button>
+      </div>
+      <div></div>
+    </div>
+    <div id="inactiveResults"></div>`;
+
+  $('applyInactive').onclick = () => {
+    const v = parseInt($('inactiveDays').value, 10);
+    inactiveDaysThreshold = isFinite(v) && v > 0 ? v : 7;
+    renderInactiveResults();
+  };
+  renderInactiveResults();
+}
+
+function renderInactiveResults(){
+  const now = Date.now();
+  const withDate = [], noDate = [];
+  DEVICES.forEach(d => {
+    if (!d.lastSeen) { noDate.push(d); return; }
+    const t = new Date(d.lastSeen);
+    if (isNaN(t.getTime())) { noDate.push(d); return; }
+    const days = (now - t.getTime()) / 86400000;
+    if (days > inactiveDaysThreshold) withDate.push({ d, days, t });
   });
+  withDate.sort((a,b) => b.days - a.days);
+
+  let html = tableHtml(
+    ['Device / Email', 'Group', 'Last connected', 'Days since'],
+    withDate.map(({d,days,t}) => [esc(d.email || d.name), esc(d.path || '—'), esc(t.toLocaleString()), Math.floor(days)]),
+    `No devices have gone more than ${inactiveDaysThreshold} day(s) without connecting.`
+  );
+  if (noDate.length) {
+    html += `<div class="hint" style="margin-top:12px;">${noDate.length} device(s) have no recorded last-connect time from this server and are not included above.</div>`;
+  }
+  $('inactiveResults').innerHTML = html;
 }
 </script>
 </body>
