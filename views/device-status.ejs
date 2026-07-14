@@ -47,9 +47,9 @@
 
   <div class="hidden" id="analysisWrap">
     <div class="tabs" id="tabSeg">
-      <button type="button" data-tab="notais" class="on">1. Not using AIS carrier</button>
-      <button type="button" data-tab="offlineusage">2. Offline with usage in report</button>
-      <button type="button" data-tab="inactive">3. Inactive over N days</button>
+      <button type="button" data-tab="notais" class="on">1. Device not using AIS Sim Card</button>
+      <button type="button" data-tab="inactive">2. Device inactive over N days</button>
+      <button type="button" data-tab="offlineusage" id="offlineTabBtn">3. Device offline but consume the data in AIS report</button>
     </div>
     <div id="tabBody"></div>
   </div>
@@ -171,6 +171,15 @@ function periodStartDate(periodStr){
   const month = parseInt(m[1],10), year = parseInt(m[2],10);
   return new Date(year, month-1, 1, 0, 0, 0, 0);
 }
+// "06/2026" -> "June 2026", for the readable "month of report" labels used
+// in the offline-usage tab title and its tab button.
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+function formatPeriodLabel(periodStr){
+  const m = /^(\d{1,2})\/(\d{4})$/.exec(String(periodStr||'').trim());
+  if (!m) return periodStr || '';
+  const mi = parseInt(m[1],10) - 1;
+  return (MONTH_NAMES[mi] || m[1]) + ' ' + m[2];
+}
 
 function parseAisBillingReport(rows){
   const headerIdx = findAisHeaderRowIndex(rows);
@@ -245,6 +254,13 @@ function ingestBilling(rows){
   $('importOk').textContent = `Loaded ${parsed.records.length} subscriber row(s)` +
     (parsed.period ? ` for period ${parsed.period}` : '') + '.';
   $('importOk').classList.remove('hidden');
+
+  const offlineTabBtn = $('offlineTabBtn');
+  if (offlineTabBtn) {
+    offlineTabBtn.textContent = parsed.period
+      ? `3. Device offline but consume the data in AIS report of ${formatPeriodLabel(parsed.period)}`
+      : '3. Device offline but consume the data in AIS report';
+  }
 
   renderReportBanner();
   renderActiveTab();
@@ -342,7 +358,7 @@ function renderNotAis(){
 
   $('tabBody').innerHTML = `
     <div class="card">
-      ${panelHead('Devices not using AIS carrier', `${rows.length} shown · ${DEVICES.length.toLocaleString()} records`)}
+      ${panelHead('Devices not using AIS Sim Card', `${rows.length} shown · ${DEVICES.length.toLocaleString()} records`)}
       <canvas id="notAisChart" style="max-height:280px;"></canvas>
       ${numberedTable(
         ['Device / Email', 'Group', 'Carrier'],
@@ -365,7 +381,7 @@ function renderOfflineUsage(){
   if (offlineChart) { offlineChart.destroy(); offlineChart = null; }
 
   if (!BILLING) {
-    $('tabBody').innerHTML = `<div class="card">${panelHead('Offline devices with usage in report', '0 shown · 0 records')}<div class="hint">Upload the AIS Data Usage report above to run this check.</div></div>`;
+    $('tabBody').innerHTML = `<div class="card">${panelHead('Devices offline but consuming AIS data', '0 shown · 0 records')}<div class="hint">Upload the AIS Data Usage report above to run this check.</div></div>`;
     return;
   }
 
@@ -395,8 +411,13 @@ function renderOfflineUsage(){
 
   const countText = `${matches.length} shown · ${BILLING.records.length.toLocaleString()} records`;
 
+  const monthLabel = BILLING.period ? formatPeriodLabel(BILLING.period) : '';
+  const panelTitle = monthLabel
+    ? `Devices offline but consuming AIS data in ${monthLabel}`
+    : 'Devices offline but consuming AIS data';
+
   if (!withPhone.length) {
-    $('tabBody').innerHTML = `<div class="card">${panelHead('Offline devices with usage in report', countText)}<div class="empty">No device on this MobiControl server exposes a phone number field, so devices could not be matched to the report.</div></div>`;
+    $('tabBody').innerHTML = `<div class="card">${panelHead(panelTitle, countText)}<div class="empty">No device on this MobiControl server exposes a phone number field, so devices could not be matched to the report.</div></div>`;
     return;
   }
 
@@ -405,7 +426,7 @@ function renderOfflineUsage(){
     : '';
 
   let html = `<div class="card">
-    ${panelHead('Offline devices with usage in report', countText)}`;
+    ${panelHead(panelTitle, countText)}`;
 
   if (matches.length) {
     html += `<canvas id="offlineChart" style="max-height:280px;"></canvas>`;
