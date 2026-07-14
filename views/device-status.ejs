@@ -276,6 +276,15 @@ fileInput.onchange = () => { if(fileInput.files.length) handleFile(fileInput.fil
 function panelHead(title, countText){
   return `<div class="panelhead"><h2>${esc(title)}</h2><span class="pill">${esc(countText)}</span></div>`;
 }
+// Matches the Telecom Data Usage dashboard's device cell: email (or name, if
+// no email is on file) as the primary line, with the raw device name shown
+// as a small muted subtitle underneath -- only when it differs from the
+// primary line, same as renderDevTable()/drillDevice() there.
+function deviceCell(d){
+  const label = d.email || d.name;
+  const sub = label !== d.name ? `<div class="muted" style="font-size:11px;">${esc(d.name)}</div>` : '';
+  return `${esc(label)}${sub}`;
+}
 function numberedTable(headers, rowsArr, emptyMsg){
   if (!rowsArr.length) return `<div class="empty">${esc(emptyMsg || 'No matching devices.')}</div>`;
   const thead = '<tr>' + '<th class="rank">#</th>' + headers.map(h=>`<th>${esc(h)}</th>`).join('') + '</tr>';
@@ -337,7 +346,7 @@ function renderNotAis(){
       <canvas id="notAisChart" style="max-height:280px;"></canvas>
       ${numberedTable(
         ['Device / Email', 'Group', 'Carrier'],
-        rows.map(d => [esc(d.email || d.name), esc(d.path || '—'), esc(d.carrier ? d.carrier : 'Unknown')]),
+        rows.map(d => [deviceCell(d), esc(d.path || '—'), esc(d.carrier ? d.carrier : 'Unknown')]),
         'Every device with a known carrier reports AIS.'
       )}
       <div class="hint">Based on each device's live CellularCarrier field from MobiControl (independent of the uploaded report).</div>
@@ -411,7 +420,7 @@ function renderOfflineUsage(){
   html += numberedTable(
     ['Device / Email', 'Phone', 'Group', 'Last connected', 'Usage in report'],
     matches.map(({d,rec}) => [
-      esc(d.email || d.name),
+      deviceCell(d),
       esc(rec.phone),
       esc(d.path || '—'),
       d.lastSeen && !isNaN(new Date(d.lastSeen).getTime()) ? esc(new Date(d.lastSeen).toLocaleString()) : 'Never',
@@ -493,7 +502,7 @@ function renderInactiveResults(){
   if (withDate.length) html += `<canvas id="inactiveChart" style="max-height:280px;"></canvas>`;
   html += numberedTable(
     ['Device / Email', 'Group', 'Last connected', 'Days since'],
-    withDate.map(({d,days,t}) => [esc(d.email || d.name), esc(d.path || '—'), esc(t.toLocaleString()), Math.floor(days)]),
+    withDate.map(({d,days,t}) => [deviceCell(d), esc(d.path || '—'), esc(t.toLocaleString()), Math.floor(days)]),
     `No devices have gone more than ${inactiveDaysThreshold} day(s) without connecting.`
   );
   if (noDate.length) {
