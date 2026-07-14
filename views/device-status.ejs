@@ -29,22 +29,6 @@
     <div class="hint" id="loadHint">Loading live device status from MobiControl…</div>
   </div>
 
-  <!-- AIS Data Usage report upload (source of data for the analyses below) -->
-  <div class="card" id="importCard">
-    <div class="drop" id="drop">
-      <h2>Drop the AIS Data Usage report here (.xlsx or .csv)</h2>
-      <p>The report (e.g. "รายละเอียดการใช้ internet.xlsx") is parsed entirely in your browser -- it is never uploaded to this server. Click to browse.</p>
-      <input type="file" id="file" accept=".xlsx,.xls,.csv" class="hidden">
-    </div>
-    <div id="importErr" class="err hidden"></div>
-    <div id="importOk" class="success hidden"></div>
-  </div>
-
-  <!-- Source report details banner (mirrors the Telecom Data Usage summary bar) -->
-  <div class="card hidden" id="reportBanner">
-    <div class="stats" id="reportStats"></div>
-  </div>
-
   <div class="hidden" id="analysisWrap">
     <div class="tabs" id="tabSeg">
       <button type="button" data-tab="notais" class="on">1. Device not using AIS Sim Card</button>
@@ -85,7 +69,6 @@ const loadDevices = fetch('/api/device-status')
     $('loadHint').classList.add('hidden');
     $('analysisWrap').classList.remove('hidden');
     renderSummary();
-    if (BILLING) renderReportBanner(); // devices arrived after a file was already dropped
     renderActiveTab();
   })
   .catch(err => {
@@ -251,10 +234,6 @@ function ingestBilling(rows){
   parsed.records.forEach(r => { byPhone[r.phoneKey] = r; });
   BILLING = Object.assign({}, parsed, { byPhone });
 
-  $('importOk').textContent = `Loaded ${parsed.records.length} subscriber row(s)` +
-    (parsed.period ? ` for period ${parsed.period}` : '') + '.';
-  $('importOk').classList.remove('hidden');
-
   const offlineTabBtn = $('offlineTabBtn');
   if (offlineTabBtn) {
     offlineTabBtn.textContent = parsed.period
@@ -262,31 +241,29 @@ function ingestBilling(rows){
       : '3. Device offline but consume the data in AIS report';
   }
 
-  renderReportBanner();
+  // Rebuilds this tab's whole panel (drop zone included), then re-shows the
+  // success message on the freshly-rendered drop zone.
   renderActiveTab();
+  const ok = $('importOk');
+  if (ok) {
+    ok.textContent = `Loaded ${parsed.records.length} subscriber row(s)` +
+      (parsed.period ? ` for period ${parsed.period}` : '') + '.';
+    ok.classList.remove('hidden');
+  }
 }
 
-// Highlights the details of the uploaded source report as a stat bar,
-// matching the Telecom Data Usage dashboard's summary-bar style.
-function renderReportBanner(){
-  if (!BILLING) return;
-  const totalKB = BILLING.records.reduce((s,r) => s + r.totalKB, 0);
-  const matchedCount = DEVICES.filter(d => d.phone && BILLING.byPhone[normalizePhone(d.phone)]).length;
-  $('reportStats').innerHTML = `
-    <div class="stat"><div class="n">${esc(fmt(totalKB))}</div><div class="l">total volume</div></div>
-    <div class="stat"><div class="n">${BILLING.records.length}</div><div class="l">subscribers</div></div>
-    <div class="stat"><div class="n">${matchedCount}</div><div class="l">matched devices</div></div>
-    <div class="stat"><div class="n">${esc(BILLING.period || '—')}</div><div class="l">billing period</div></div>
-    <div class="stat"><div class="n">${esc(BILLING.reportDate || '—')}</div><div class="l">report created</div></div>`;
-  $('reportBanner').classList.remove('hidden');
+// The upload drop zone lives only inside tab 3's panel (see
+// renderOfflineUsage), so it's re-created -- and its listeners re-wired --
+// every time that tab renders.
+function wireImportControls(){
+  const drop = $('drop'), fileInput = $('file');
+  if (!drop || !fileInput) return;
+  drop.onclick = () => fileInput.click();
+  ['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('drag');}));
+  ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('drag');}));
+  drop.addEventListener('drop', ev => { if(ev.dataTransfer.files.length) handleFile(ev.dataTransfer.files[0]); });
+  fileInput.onchange = () => { if(fileInput.files.length) handleFile(fileInput.files[0]); };
 }
-
-const drop = $('drop'), fileInput = $('file');
-drop.onclick = () => fileInput.click();
-['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('drag');}));
-['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('drag');}));
-drop.addEventListener('drop', ev => { if(ev.dataTransfer.files.length) handleFile(ev.dataTransfer.files[0]); });
-fileInput.onchange = () => { if(fileInput.files.length) handleFile(fileInput.files[0]); };
 
 // ---------- shared panel helpers (mirrors the Top Apps / Top Devices frame) ----------
 function panelHead(title, countText){
@@ -380,8 +357,37 @@ function renderNotAis(){
 function renderOfflineUsage(){
   if (offlineChart) { offlineChart.destroy(); offlineChart = null; }
 
+  // Upload zone lives only on this tab -- only available when this card is open.
+  const uploadHtml = `
+    <div class="card" id="importCard">
+      <div class="drop" id="drop">
+        <h2>Drop the AIS Data Usage report here (.xlsx or .csv)</h2>
+        <p>The report (e.g. "รายละเอียดการใช้ internet.xlsx") is parsed entirely in your browser -- it is never uploaded to this server. Click to browse.</p>
+        <input type="file" id="file" accept=".xlsx,.xls,.csv" class="hidden">
+      </div>
+      <div id="importErr" class="err hidden"></div>
+      <div id="importOk" class="success hidden"></div>
+    </div>`;
+
+  let bannerHtml = '';
+  if (BILLING) {
+    const totalKB = BILLING.records.reduce((s,r) => s + r.totalKB, 0);
+    const matchedCount = DEVICES.filter(d => d.phone && BILLING.byPhone[normalizePhone(d.phone)]).length;
+    bannerHtml = `
+      <div class="card">
+        <div class="stats">
+          <div class="stat"><div class="n">${esc(fmt(totalKB))}</div><div class="l">total volume</div></div>
+          <div class="stat"><div class="n">${BILLING.records.length}</div><div class="l">subscribers</div></div>
+          <div class="stat"><div class="n">${matchedCount}</div><div class="l">matched devices</div></div>
+          <div class="stat"><div class="n">${esc(BILLING.period || '—')}</div><div class="l">billing period</div></div>
+          <div class="stat"><div class="n">${esc(BILLING.reportDate || '—')}</div><div class="l">report created</div></div>
+        </div>
+      </div>`;
+  }
+
   if (!BILLING) {
-    $('tabBody').innerHTML = `<div class="card">${panelHead('Devices offline but consuming AIS data', '0 shown · 0 records')}<div class="hint">Upload the AIS Data Usage report above to run this check.</div></div>`;
+    $('tabBody').innerHTML = uploadHtml + `<div class="card">${panelHead('Devices offline but consuming AIS data', '0 shown · 0 records')}<div class="hint">Upload the AIS Data Usage report above to run this check.</div></div>`;
+    wireImportControls();
     return;
   }
 
@@ -417,7 +423,8 @@ function renderOfflineUsage(){
     : 'Devices offline but consuming AIS data';
 
   if (!withPhone.length) {
-    $('tabBody').innerHTML = `<div class="card">${panelHead(panelTitle, countText)}<div class="empty">No device on this MobiControl server exposes a phone number field, so devices could not be matched to the report.</div></div>`;
+    $('tabBody').innerHTML = uploadHtml + bannerHtml + `<div class="card">${panelHead(panelTitle, countText)}<div class="empty">No device on this MobiControl server exposes a phone number field, so devices could not be matched to the report.</div></div>`;
+    wireImportControls();
     return;
   }
 
@@ -425,7 +432,7 @@ function renderOfflineUsage(){
     ? esc(BILLING.period) + (periodStart && periodEnd ? ', ' + periodStart.toLocaleDateString() + ' – ' + periodEnd.toLocaleDateString() : '')
     : '';
 
-  let html = `<div class="card">
+  let html = uploadHtml + bannerHtml + `<div class="card">
     ${panelHead(panelTitle, countText)}`;
 
   if (matches.length) {
@@ -453,6 +460,7 @@ function renderOfflineUsage(){
   html += `</div>`;
 
   $('tabBody').innerHTML = html;
+  wireImportControls();
 
   if (matches.length) {
     const top = matches.slice(0,15);
